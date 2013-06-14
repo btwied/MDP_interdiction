@@ -28,14 +28,14 @@ class MDP:
 		initial: the subset of variables that are initially True
 		actions: 
 		rewards: 
-		basis: 
-
-		may also need to specify a basis
+		
+		TODO: finish commenting this!
 		"""
 		self.variables = sorted(set(variables))
 		self.variable_index = {v:i for i,v in enumerate(self.variables)}
 		self.initial = zeros(len(self.variables), dtype=bool)
 		self.initial[[self.variable_index[v] for v in initial]] = True
+		
 		#TODO: finish implementing this
 		self.actions = actions
 		self.rewards = rewards
@@ -106,25 +106,21 @@ class Action:
 	"""
 	TODO: comment this!
 	"""
-	def __init__(self, name, cost, prereqs, outcome_dist):
+	def __init__(self, name, cost, prereq, outcome_dist):
 		"""
-		prereqs: a mapping of variables to values, indicating what must be true
-				or false if the action is to be performed.
 		outcome_dist: a mapping of outcomes to probabilities such that
 				p > 0 and sum(p) < 1
+
+		TODO: finish commenting this!
 		"""
 		self.name = name
 		self.cost = cost
-		self.prereqs = prereqs
-		self.outcomes = outcomes
+		self.prereq = prereq
+		self.outcomes = sorted(outcome_dist.keys())
+		self.probs = [outcome_dist[o] for o in self.outcomes]
 
 	#TODO: implement this!
 
-
-# prereqs should be a dict mapping vars to vals
-# outcomes should be a dict mapping tuples of vars to probs
-# 0 < probs; sum(probs) < 1
-Action = namedtuple("Action", "name prereqs outcomes cost")
 
 
 def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
