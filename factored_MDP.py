@@ -59,6 +59,21 @@ class Outcome:
 		next_state[[variable_index[v] for v in self.dels]] = False
 		return next_state
 
+	def set_vectors(self, variable_index);
+		self.add_vect = np.zeros(len(variable_index))
+		self.del_vect = np.zeros(len(variable_index))
+		self.add_vect[[variable_index[v] for v in self.adds]] = True
+		self.del_vect[[variable_index[v] for v in self.dels]] = True
+	
+	def fast_trans(self, state):
+		"""
+		Performs state transition in place, without generating new array.
+		
+		set_vectors() must have been performed first.
+		"""
+		state[self.add_vect] = True
+		state[self.del_vect] = False
+
 
 # prereqs should be a dict mapping vars to vals
 # outcomes should be a dict mapping tuples of vars to probs
