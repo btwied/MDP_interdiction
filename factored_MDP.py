@@ -20,7 +20,7 @@ class MDP:
 		- actions induce distributions over fixed outcomes
 		- an outcome can add some variables and/or remove others
 
-	TODO: comment this!
+	TODO: finish commenting this!
 	"""
 	def __init__(self, variables, initial, actions, rewards):
 		"""
@@ -36,6 +36,7 @@ class MDP:
 		self.variable_index = {v:i for i,v in enumerate(self.variables)}
 		self.initial = zeros(len(self.variables), dtype=bool)
 		self.initial[[self.variable_index[v] for v in initial]] = True
+		#TODO: finish implementing this
 		self.actions = actions
 		self.rewards = rewards
 
@@ -48,46 +49,76 @@ class MDP:
 		#TODO: implement this
 
 
-class Outcome:
-	"""
-	TODO: comment this!
-	"""
-	def __init__(self, adds, dels):
-		self.adds = adds
-		self.dels = dels
+class PartialState:
+	def __init__(self, pos, neg):
+		self.pos = pos
+		self.neg = neg
+		self.tup = (tuple(self.pos), tuple(self.neg))
 
+	def __hash__(self):
+		return hash(self.tup)
+	
+	def __cmp__(self, other):
+		try:
+			return cmp(self.tup, other.tup)
+		except AttributeError:
+			return cmp(self.tup, other)
+
+
+class Outcome(PartialState):
+	"""
+	Adds literals to or deletes literals from the state.
+	
+	Performing an action will result in some associated outcome's transition 
+	being applied to the state.
+	"""
 	def transition(self, state, variable_index):
+		"""
+		Add the positive literals to the state and remove the negative ones.
+		"""
 		next_state = array(state)
 		next_state[[variable_index[v] for v in self.adds]] = True
 		next_state[[variable_index[v] for v in self.dels]] = False
 		return next_state
 
-	def set_vectors(self, variable_index);
-		self.add_vect = np.zeros(len(variable_index))
-		self.del_vect = np.zeros(len(variable_index))
-		self.add_vect[[variable_index[v] for v in self.adds]] = True
-		self.del_vect[[variable_index[v] for v in self.dels]] = True
-	
-	def fast_trans(self, state):
+
+class Prereq(PartialState):
+	"""
+	Specifies prerequisites that must hold for an action to be available.
+	"""
+	def consistent(self, state, variable_index):
 		"""
-		Performs state transition in place, without generating a new array.
-		
-		set_vectors() must have been performed first.
+		Tests whether a state is consistend with the prerequisite.
+
+		A state is consistent with a prereq if all the positives are true and
+		all the negatives are false.
 		"""
-		state[self.add_vect] = True
-		state[self.del_vect] = False
+		for v in self.pos:
+			if not state[variable_index[v]]:
+				return False
+		for v in self.neg:
+			if state[variable_index[v]]:
+				return False
+		return True
 
 
 class Action:
 	"""
 	TODO: comment this!
 	"""
-	def __init__(self, name, prereqs, outcomes, cost):
-		#TODO: implement this!
+	def __init__(self, name, cost, prereqs, outcome_dist):
+		"""
+		prereqs: a mapping of variables to values, indicating what must be true
+				or false if the action is to be performed.
+		outcome_dist: a mapping of outcomes to probabilities such that
+				p > 0 and sum(p) < 1
+		"""
 		self.name = name
+		self.cost = cost
 		self.prereqs = prereqs
 		self.outcomes = outcomes
-		self.cost = cost
+
+	#TODO: implement this!
 
 
 # prereqs should be a dict mapping vars to vals
