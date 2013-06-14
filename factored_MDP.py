@@ -22,7 +22,7 @@ class MDP:
 
 	TODO: comment this!
 	"""
-	def __init__(self, variables, initial, actions, rewards, basis):
+	def __init__(self, variables, initial, actions, rewards):
 		"""
 		variables: a collection of variable names
 		initial: the subset of variables that are initially True
@@ -38,9 +38,14 @@ class MDP:
 		self.initial[[self.variable_index[v] for v in initial]] += True
 		self.actions = actions
 		self.rewards = rewards
-		self.basis = basis
 
-	#TODO: convert the MDP to a linear program
+	
+	def to_LP(self, basis):
+		"""
+		Construct an approximate LP to solve the MDP using gurobipy.
+		"""
+		assert gurobipy
+		#TODO: implement this
 
 # prereqs should be a dict mapping vars to vals
 # outcomes should be a dict mapping tuples of vars to probs
@@ -70,7 +75,9 @@ def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 
 	MDP_rwds = {v : uniform(min_rwd, max_rwd) for v in filter(lambda x: \
 				uniform(0,1) < nonzero_rwd_prob, MDP_vars)}
-	return MDP(MDP_vars, MDP_acts, MDP_rwds)
+	return MDP(MDP_vars, [], MDP_acts, MDP_rwds)
+
 
 if __name__ == "__main__":
-	pass
+	m = random_MDP()
+	m.to_LP([()])
