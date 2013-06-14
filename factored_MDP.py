@@ -2,7 +2,7 @@ from collections import namedtuple
 from random import randrange, sample
 
 from numpy.random import uniform
-from numpy import zeros
+from numpy import zeros, array
 
 from warnings import warn
 try:
@@ -35,7 +35,7 @@ class MDP:
 		self.variables = sorted(set(variables))
 		self.variable_index = {v:i for i,v in enumerate(self.variables)}
 		self.initial = zeros(len(self.variables), dtype=bool)
-		self.initial[[self.variable_index[v] for v in initial]] += True
+		self.initial[[self.variable_index[v] for v in initial]] = True
 		self.actions = actions
 		self.rewards = rewards
 
@@ -46,6 +46,19 @@ class MDP:
 		"""
 		assert gurobipy
 		#TODO: implement this
+
+
+class Outcome:
+	def __init__(self, adds, dels):
+		self.adds = adds
+		self.dels = dels
+
+	def transition(self, state, variable_index):
+		next_state = array(state)
+		next_state[[variable_index[v] for v in self.adds]] = True
+		next_state[[variable_index[v] for v in self.dels]] = False
+		return next_state
+
 
 # prereqs should be a dict mapping vars to vals
 # outcomes should be a dict mapping tuples of vars to probs
