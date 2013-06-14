@@ -49,6 +49,9 @@ class MDP:
 
 
 class Outcome:
+	"""
+	TODO: comment this!
+	"""
 	def __init__(self, adds, dels):
 		self.adds = adds
 		self.dels = dels
@@ -67,12 +70,24 @@ class Outcome:
 	
 	def fast_trans(self, state):
 		"""
-		Performs state transition in place, without generating new array.
+		Performs state transition in place, without generating a new array.
 		
 		set_vectors() must have been performed first.
 		"""
 		state[self.add_vect] = True
 		state[self.del_vect] = False
+
+
+class Action:
+	"""
+	TODO: comment this!
+	"""
+	def __init__(self, name, prereqs, outcomes, cost):
+		#TODO: implement this!
+		self.name = name
+		self.prereqs = prereqs
+		self.outcomes = outcomes
+		self.cost = cost
 
 
 # prereqs should be a dict mapping vars to vals
