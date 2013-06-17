@@ -1,4 +1,4 @@
-#! /usr/bin/python
+#!/usr/bin/python
 
 from sys import argv
 from json import dumps

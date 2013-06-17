@@ -1,3 +1,5 @@
+#!/usr/bin/python
+
 from random import randrange, sample
 
 from numpy.random import uniform
