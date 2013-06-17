@@ -1,4 +1,3 @@
-from collections import namedtuple
 from random import randrange, sample
 
 from numpy.random import uniform
@@ -40,7 +39,12 @@ class MDP:
 		self.actions = actions
 		self.rewards = rewards
 
-	
+	def __repr__(self):
+		s = "MDP: "
+		s += str(len(self.variables)) + " variables, "
+		s += str(len(self.actions)) + " actions."
+		return s
+
 	def to_LP(self, basis):
 		"""
 		Construct an approximate LP to solve the MDP using gurobipy.
@@ -124,24 +128,37 @@ class Action:
 
 
 def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
-				max_prereqs=2, min_outs=10, max_outs=10, max_outs_per_act=3, \
-				max_vars_per_out=3, min_cost=0, max_cost=10, min_discount=.8, \
-				max_discount=.999, nonzero_rwd_prob=0.3, min_rwd=-10, \
-				max_rwd=10):
+				max_pos_prereqs=2, max_neg_prereqs=0, min_outs=10, \
+				max_outs=10, min_outs_per_act=1, max_outs_per_act=3, \
+				min_pos_vars_per_out=1, max_pos_vars_per_out=3, \
+				min_neg_vars_per_out=0, max_neg_vars_per_out=0, \
+				min_cost=0, max_cost=10, min_cont_prob=.8, max_cont_prob=.999, \
+				nonzero_rwd_prob=0.3, min_rwd=-10, max_rwd=10):
 	"""Creates an MDP for testing."""
 	MDP_vars = ['v'+str(i) for i in range(randrange(min_vars, max_vars+1))]
-	MDP_outs = [tuple(sample(MDP_vars, randrange(1, max_vars_per_out+1))) for \
-				i in range(randrange(min_outs, max_outs+1))]
+	vars_set = set(MDP_vars)
+	
+	MDP_outs = []
+	for i in range(randrange(min_outs, max_outs+1)):
+		pos_outs = sample(MDP_vars, randrange(min_pos_vars_per_out, 
+							max_pos_vars_per_out + 1))
+		neg_outs = sample(vars_set - set(pos_outs), randrange( \
+							max_neg_vars_per_out + 1))
+		MDP_outs.append(Outcome(pos_outs, neg_outs))
 
 	MDP_acts = []
-	for i in range(randrange(min_acts, max_acts+1)):
-		act_prereqs = {v:True for v in sample(MDP_vars, \
-						randrange(max_prereqs+1))}
-		act_outs =  sample(MDP_outs, randrange(1, max_outs_per_act+1))
-		act_probs = uniform(0,1,10)
-		act_probs /= (act_probs.sum() / uniform(min_discount, max_discount))
-		MDP_acts.append(Action("a"+str(i), act_prereqs, dict(zip(act_outs, \
-						act_probs)), uniform(min_cost, max_cost)))
+	for i in range(randrange(min_acts, max_acts + 1)):
+		pos_prereqs = sample(MDP_vars, randrange(max_pos_prereqs + 1))
+		neg_prereqs = sample(vars_set - set(pos_prereqs), \
+							randrange(max_neg_prereqs + 1))
+		act_prereq = Prereq(pos_prereqs, neg_prereqs)
+
+		act_outs =  sample(MDP_outs, randrange(min_outs_per_act, \
+							max_outs_per_act + 1))
+		act_probs = uniform(0,1,len(act_outs))
+		act_probs /= (act_probs.sum() / uniform(min_cont_prob, max_cont_prob))
+		MDP_acts.append(Action("a"+str(i), uniform(min_cost, max_cost), \
+						act_prereq, dict(zip(act_outs, act_probs))))
 
 	MDP_rwds = {v : uniform(min_rwd, max_rwd) for v in filter(lambda x: \
 				uniform(0,1) < nonzero_rwd_prob, MDP_vars)}
@@ -150,4 +167,5 @@ def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 
 if __name__ == "__main__":
 	m = random_MDP()
-	m.to_LP([()])
+	print m
+#	m.to_LP([()])
