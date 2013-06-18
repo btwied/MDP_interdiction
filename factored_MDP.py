@@ -20,6 +20,7 @@ class MDP:
 		- boolean variables
 		- actions have prerequisites
 		- actions induce distributions over fixed outcomes
+		- only positive variables can yield nonzero terminal reward
 
 	TODO: finish commenting this!
 	"""
@@ -28,7 +29,7 @@ class MDP:
 		variables: a collection of variable names
 		initial: the subset of variables that are initially True
 		actions: 
-		rewards: 
+		rewards: mapping of variables to rewards
 		
 		TODO: finish commenting this!
 		"""
@@ -39,7 +40,10 @@ class MDP:
 		
 		#TODO: finish implementing this
 		self.actions = actions
-		self.rewards = rewards
+		self.reward_dict = rewards
+		self.reward_vect = array([rewards[v] if v in rewards else 0 \
+								for v in self.variables])
+		
 
 	def __repr__(self):
 		s = "MDP: "
@@ -62,7 +66,9 @@ class MDP:
 		m.update()
 		for state,action in product(states, self.actions):
 			if action.prereq.consistent(state, self.variable_index):
-				expr = G.LinExpr(-action.cost)
+				const = action.stop_prob * self.reward_vect.dot(state)
+				const -= action.cost
+				expr = G.LinExpr(float(const))
 				for outcome,prob in action.outcome_probs.items():
 					expr += prob * values[self.state_name( \
 							outcome.transition(state, self.variable_index))]
@@ -158,6 +164,7 @@ class Action:
 		self.cost = cost
 		self.prereq = prereq
 		self.outcome_probs = outcome_dist
+		self.stop_prob = 1. - sum(outcome_dist.values())
 
 	#TODO: implement this!
 
@@ -168,8 +175,8 @@ def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 				max_outs=20, min_outs_per_act=1, max_outs_per_act=3, \
 				min_pos_vars_per_out=1, max_pos_vars_per_out=3, \
 				min_neg_vars_per_out=0, max_neg_vars_per_out=0, \
-				min_cost=0, max_cost=10, min_cont_prob=.8, max_cont_prob=.999, \
-				nonzero_rwd_prob=0.3, min_rwd=-10, max_rwd=10):
+				min_cost=0, max_cost=2, min_cont_prob=.8, max_cont_prob= \
+				.999, nonzero_rwd_prob=0.3, min_rwd=-10, max_rwd=10):
 	"""Creates an MDP for testing."""
 	MDP_vars = ['l'+str(i) for i in range(randrange(min_vars, max_vars+1))]
 	vars_set = set(MDP_vars)
@@ -195,6 +202,8 @@ def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 		act_probs /= (act_probs.sum() / uniform(min_cont_prob, max_cont_prob))
 		MDP_acts.append(Action("a"+str(i), uniform(min_cost, max_cost), \
 						act_prereq, dict(zip(act_outs, act_probs))))
+
+	MDP_acts.append(Action("stop", 1, Prereq([],[]), {}))
 
 	MDP_rwds = {v : uniform(min_rwd, max_rwd) for v in filter(lambda x: \
 				uniform(0,1) < nonzero_rwd_prob, MDP_vars)}
