@@ -20,15 +20,16 @@ class MDP:
 		- boolean variables
 		- actions have prerequisites
 		- actions induce distributions over fixed outcomes
+		- only positive variables can yield nonzero terminal reward
 
 	TODO: finish commenting this!
 	"""
-	def __init__(self, variables, initial, actions, rewards):
+	def __init__(self, variables, initial, actions, true_rwds, false_rwds):
 		"""
 		variables: a collection of variable names
 		initial: the subset of variables that are initially True
 		actions: 
-		rewards: 
+		rewards: mapping of variables to rewards
 		
 		TODO: finish commenting this!
 		"""
@@ -39,7 +40,11 @@ class MDP:
 		
 		#TODO: finish implementing this
 		self.actions = actions
-		self.rewards = rewards
+		self.true_rewards = array([true_rwds[v] if v in true_rwds else 0 \
+								for v in self.variables])
+		self.false_rewards = array([false_rwds[v] if v in false_rwds \
+								else 0 for v in self.variables])
+		
 
 	def __repr__(self):
 		s = "MDP: "
@@ -49,7 +54,7 @@ class MDP:
 
 	def exact_LP(self):
 		"""
-		Construct an exponentially large LP to solve the MDP using gurobi.
+		Construct an exponentially large LP to solve the MDP with gurobi.
 		"""
 		m = new_gurobi_model()
 		states =  map(array, product([0,1], repeat=len(self.variables)))
@@ -62,7 +67,9 @@ class MDP:
 		m.update()
 		for state,action in product(states, self.actions):
 			if action.prereq.consistent(state, self.variable_index):
-				expr = G.LinExpr(-action.cost)
+				const = action.stop_prob * self.terminal_reward(state)
+				const -= action.cost
+				expr = G.LinExpr(float(const))
 				for outcome,prob in action.outcome_probs.items():
 					expr += prob * values[self.state_name( \
 							outcome.transition(state, self.variable_index))]
@@ -72,12 +79,23 @@ class MDP:
 
 	def approx_LP(self, basis):
 		"""
-		Construct an approximate LP to solve the MDP using gurobipy.
+		Construct a factored LP to approximately solve the MDP with gurobi.
 		"""
 		m = new_gurobi_model()
+		raise NotImplementedError("TODO")
 		#TODO: implement this!
 
+	def terminal_reward(self, state_vect):
+		"""
+		TODO: comment this
+		"""
+		return float(self.true_rewards.dot(state_vect) + \
+						self.false_rewards.dot(1-state_vect))
+
 	def state_name(self, state_vect):
+		"""
+		TODO: comment this
+		"""
 		return "V_" + "".join([var if val else "" for var, val in \
 					zip(self.variables, state_vect)])
 
@@ -158,6 +176,7 @@ class Action:
 		self.cost = cost
 		self.prereq = prereq
 		self.outcome_probs = outcome_dist
+		self.stop_prob = 1. - sum(outcome_dist.values())
 
 	#TODO: implement this!
 
@@ -168,8 +187,9 @@ def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 				max_outs=20, min_outs_per_act=1, max_outs_per_act=3, \
 				min_pos_vars_per_out=1, max_pos_vars_per_out=3, \
 				min_neg_vars_per_out=0, max_neg_vars_per_out=0, \
-				min_cost=0, max_cost=10, min_cont_prob=.8, max_cont_prob=.999, \
-				nonzero_rwd_prob=0.3, min_rwd=-10, max_rwd=10):
+				min_cost=0, max_cost=2, min_cont_prob=.8, max_cont_prob= \
+				.999, true_rwds=3, false_rwds=1, min_true_rwd=0, \
+				max_true_rwd=10, min_false_rwd=-10, max_false_rwd=0):
 	"""Creates an MDP for testing."""
 	MDP_vars = ['l'+str(i) for i in range(randrange(min_vars, max_vars+1))]
 	vars_set = set(MDP_vars)
@@ -196,12 +216,16 @@ def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 		MDP_acts.append(Action("a"+str(i), uniform(min_cost, max_cost), \
 						act_prereq, dict(zip(act_outs, act_probs))))
 
-	MDP_rwds = {v : uniform(min_rwd, max_rwd) for v in filter(lambda x: \
-				uniform(0,1) < nonzero_rwd_prob, MDP_vars)}
-	return MDP(MDP_vars, [], MDP_acts, MDP_rwds)
+	MDP_acts.append(Action("stop", 1, Prereq([],[]), {}))
+
+	true_rwds = {v : uniform(min_true_rwd, max_true_rwd) for v in \
+				sample(MDP_vars, true_rwds)}
+	false_rwds = {v : uniform(min_false_rwd, max_false_rwd) for v in \
+				sample(vars_set - set(true_rwds), false_rwds)}
+	return MDP(MDP_vars, [], MDP_acts, true_rwds, false_rwds)
 
 
 if __name__ == "__main__":
-	mdp = random_MDP(min_rwd=0, max_rwd=100)
+	mdp = random_MDP()
 	lp = mdp.exact_LP()
 	lp.optimize()
