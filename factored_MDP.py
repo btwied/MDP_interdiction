@@ -53,13 +53,20 @@ class MDP:
 		"""
 		m = new_gurobi_model()
 		states =  map(array, product([0,1], repeat=len(self.variables)))
+		values = {}
 		for s in states:
-			m.addVar(name=self.state_name(s))
-#		for state,action in product(states, self.actions)
-#			if action.prereq.consistent(state):
-#				add_constraint(m, action, state_vect, self.state_name(state))
+			s_name = self.state_name(s)
+			values[s_name] = m.addVar(name=s_name, lb=-float('inf'))
+		m.update()
 		m.setObjective(G.quicksum(m.getVars()))
-		#TODO: finish implementing this!
+		m.update()
+		for state,action in product(states, self.actions):
+			if action.prereq.consistent(state, self.variable_index):
+				expr = G.LinExpr(-action.cost)
+				for outcome,prob in action.outcome_probs.items():
+					expr += prob * values[self.state_name( \
+							outcome.transition(state, self.variable_index))]
+				m.addConstr(values[self.state_name(state)] >= expr)
 		m.update()
 		return m
 
@@ -80,11 +87,6 @@ def new_gurobi_model():
 			return G.Model()
 		except NameError:
 			raise ImportError("gurobipy required")
-
-
-def add_constraint(model, action, state, state_name):
-	#TODO: implement this!
-	raise NotImplementedError("TODO")
 
 
 class PartialState:
@@ -116,8 +118,8 @@ class Outcome(PartialState):
 		Add the positive literals to the state and remove the negative ones.
 		"""
 		next_state = array(state)
-		next_state[[variable_index[v] for v in self.adds]] = True
-		next_state[[variable_index[v] for v in self.dels]] = False
+		next_state[[variable_index[v] for v in self.pos]] = True
+		next_state[[variable_index[v] for v in self.neg]] = False
 		return next_state
 
 
@@ -155,8 +157,7 @@ class Action:
 		self.name = name
 		self.cost = cost
 		self.prereq = prereq
-		self.outcomes = sorted(outcome_dist.keys())
-		self.probs = [outcome_dist[o] for o in self.outcomes]
+		self.outcome_probs = outcome_dist
 
 	#TODO: implement this!
 
@@ -170,7 +171,7 @@ def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 				min_cost=0, max_cost=10, min_cont_prob=.8, max_cont_prob=.999, \
 				nonzero_rwd_prob=0.3, min_rwd=-10, max_rwd=10):
 	"""Creates an MDP for testing."""
-	MDP_vars = ['v'+str(i) for i in range(randrange(min_vars, max_vars+1))]
+	MDP_vars = ['l'+str(i) for i in range(randrange(min_vars, max_vars+1))]
 	vars_set = set(MDP_vars)
 	
 	MDP_outs = []
@@ -201,6 +202,6 @@ def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 
 
 if __name__ == "__main__":
-	m = random_MDP()
-	print m
-	m.exact_LP().write("test.lp")
+	mdp = random_MDP(min_rwd=0, max_rwd=100)
+	lp = mdp.exact_LP()
+	lp.optimize()
