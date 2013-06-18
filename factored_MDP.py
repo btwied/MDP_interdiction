@@ -52,10 +52,14 @@ class MDP:
 		Construct an exponentially large LP to solve the MDP using gurobi.
 		"""
 		m = new_gurobi_model()
-		states_iter = product(*[['',v] for v in self.variables])
-		for s in states_iter:
-			m.addVar(name=''.join(s))
-		#TODO: finish implementing this
+		states =  map(array, product([0,1], repeat=len(self.variables)))
+		for s in states:
+			m.addVar(name=self.state_name(s))
+#		for state,action in product(states, self.actions)
+#			if action.prereq.consistent(state):
+#				add_constraint(m, action, state_vect, self.state_name(state))
+		m.setObjective(G.quicksum(m.getVars()))
+		#TODO: finish implementing this!
 		m.update()
 		return m
 
@@ -64,7 +68,11 @@ class MDP:
 		Construct an approximate LP to solve the MDP using gurobipy.
 		"""
 		m = new_gurobi_model()
-		#TODO: implement this
+		#TODO: implement this!
+
+	def state_name(self, state_vect):
+		return "V_" + "".join([var if val else "" for var, val in \
+					zip(self.variables, state_vect)])
 
 
 def new_gurobi_model():
@@ -72,6 +80,11 @@ def new_gurobi_model():
 			return G.Model()
 		except NameError:
 			raise ImportError("gurobipy required")
+
+
+def add_constraint(model, action, state, state_name):
+	#TODO: implement this!
+	raise NotImplementedError("TODO")
 
 
 class PartialState:
@@ -190,4 +203,4 @@ def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 if __name__ == "__main__":
 	m = random_MDP()
 	print m
-	m.exact_LP()
+	m.exact_LP().write("test.lp")
