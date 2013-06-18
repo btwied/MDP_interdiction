@@ -1,13 +1,14 @@
 #!/usr/bin/python
 
 from random import randrange, sample
+from itertools import product
 
 from numpy.random import uniform
 from numpy import zeros, array
 
 from warnings import warn
 try:
-	import gurobipy
+	import gurobipy as G
 except ImportError as e:
 	warn(e.message)
 
@@ -19,7 +20,6 @@ class MDP:
 		- boolean variables
 		- actions have prerequisites
 		- actions induce distributions over fixed outcomes
-		- an outcome can add some variables and/or remove others
 
 	TODO: finish commenting this!
 	"""
@@ -47,15 +47,35 @@ class MDP:
 		s += str(len(self.actions)) + " actions."
 		return s
 
-	def to_LP(self, basis):
+	def exact_LP(self):
+		"""
+		Construct an exponentially large LP to solve the MDP using gurobi.
+		"""
+		m = new_gurobi_model()
+		states_iter = product(*[['',v] for v in self.variables])
+		for s in states_iter:
+			m.addVar(name=''.join(s))
+		#TODO: finish implementing this
+		m.update()
+		return m
+
+	def approx_LP(self, basis):
 		"""
 		Construct an approximate LP to solve the MDP using gurobipy.
 		"""
-		assert gurobipy
+		m = new_gurobi_model()
 		#TODO: implement this
 
 
+def new_gurobi_model():
+		try:
+			return G.Model()
+		except NameError:
+			raise ImportError("gurobipy required")
+
+
 class PartialState:
+	"""Parent class for Outcome and Prereq."""
 	def __init__(self, pos, neg):
 		self.pos = pos
 		self.neg = neg
@@ -130,8 +150,8 @@ class Action:
 
 
 def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
-				max_pos_prereqs=2, max_neg_prereqs=0, min_outs=10, \
-				max_outs=10, min_outs_per_act=1, max_outs_per_act=3, \
+				max_pos_prereqs=2, max_neg_prereqs=0, min_outs=20, \
+				max_outs=20, min_outs_per_act=1, max_outs_per_act=3, \
 				min_pos_vars_per_out=1, max_pos_vars_per_out=3, \
 				min_neg_vars_per_out=0, max_neg_vars_per_out=0, \
 				min_cost=0, max_cost=10, min_cont_prob=.8, max_cont_prob=.999, \
@@ -170,4 +190,4 @@ def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 if __name__ == "__main__":
 	m = random_MDP()
 	print m
-#	m.to_LP([()])
+	m.exact_LP()
