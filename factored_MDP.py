@@ -10,41 +10,52 @@ from warnings import warn
 try:
 	import gurobipy as G
 except ImportError as e:
-	warn(e.message)
+	warn("Gurobi is required to solve MDPs by linear programming.")
 
 class MDP:
 	"""
 	Stores a restricted factored MDP and allows conversion to gurobi LP.
 
-	Restrictions:
-		- boolean variables
-		- actions have prerequisites
-		- actions induce distributions over fixed outcomes
-		- only positive variables can yield nonzero terminal reward
+	A MDP models probabilistic agent actions whose outcomes depend only on 
+	current state. The model also captures agent reward.
 
-	TODO: finish commenting this!
+	A factored MDP has the following properties:
+		- The state space is the cross product of the domains of a finite
+			set of finite-domain variables.
+		- The rewards and transition probabilities depend only on small-
+			domain functions of state variables.
+
+	This class imposes the following additional restrictions:
+		- boolean variables
+		- Actions have prerequisites, and are feasible iff those are met.
+		- Actions induce distributions over fixed outcomes.
+		- Outcomes specify some variables made true and some made false.
+		- The only rewards other than fixed action costs are received upon 
+			termination, and are additive across single-variable functions.
+		- By default, the discount rate is 1.0, which means there is no 
+			explicit discounting. This assumes that the sum of outcome 
+			probabilities will be strictly less than 1 for all actions.
 	"""
-	def __init__(self, variables, initial, actions, true_rwds, false_rwds):
+	def __init__(self, variables, initial, actions, true_rwds, false_rwds, \
+				discount=1.):
 		"""
 		variables: a collection of variable names
 		initial: the subset of variables that are initially True
-		actions: 
-		rewards: mapping of variables to rewards
-		
-		TODO: finish commenting this!
+		actions: a collection of Action objects.
+		true_rwds: mapping {v:r}, where reward r is received if v=True
+				upon termination.
+		true_rwds: same, but v=False
+		discount: 0 < discount <= 1
 		"""
 		self.variables = sorted(set(variables))
 		self.variable_index = {v:i for i,v in enumerate(self.variables)}
 		self.initial = zeros(len(self.variables), dtype=bool)
 		self.initial[[self.variable_index[v] for v in initial]] = True
-		
-		#TODO: finish implementing this
 		self.actions = actions
 		self.true_rewards = array([true_rwds[v] if v in true_rwds else 0 \
 								for v in self.variables])
 		self.false_rewards = array([false_rwds[v] if v in false_rwds \
 								else 0 for v in self.variables])
-		
 
 	def __repr__(self):
 		s = "MDP: "
@@ -55,15 +66,23 @@ class MDP:
 	def exact_LP(self):
 		"""
 		Construct an exponentially large LP to solve the MDP with gurobi.
+
+		This LP follows the standard construction given, for example, on
+		p.25 of 'Competitive Markov Decision Processes' by Filar & Vrieze.
+
+		The solution to this LP is the average value over all states. The
+		the value an individual state can be extracted from the var.x of
+		the state's lp variable. A list of these lp variables can be
+		retreived using m.getVars().
 		"""
-		m = new_gurobi_model()
+		m = G.Model()
 		states =  map(array, product([0,1], repeat=len(self.variables)))
-		values = {}
+		lp_vars = {}
 		for s in states:
-			s_name = self.state_name(s)
-			values[s_name] = m.addVar(name=s_name, lb=-float('inf'))
+			s_name = self.lp_var_name(s)
+			lp_vars[s_name] = m.addVar(name=s_name, lb=-float('inf'))
 		m.update()
-		m.setObjective(G.quicksum(m.getVars()))
+		m.setObjective(G.quicksum(m.getVars()) / len(states))
 		m.update()
 		for state,action in product(states, self.actions):
 			if action.prereq.consistent(state, self.variable_index):
@@ -71,40 +90,53 @@ class MDP:
 				const -= action.cost
 				expr = G.LinExpr(float(const))
 				for outcome,prob in action.outcome_probs.items():
-					expr += prob * values[self.state_name( \
+					expr += discount * prob * lp_vars[self.lp_var_name( \
 							outcome.transition(state, self.variable_index))]
-				m.addConstr(values[self.state_name(state)] >= expr)
+				m.addConstr(lp_vars[self.lp_var_name(state)] >= expr)
 		m.update()
+		self.exact_model = m
 		return m
 
-	def approx_LP(self, basis):
+	def factored_LP(self, basis):
 		"""
 		Construct a factored LP to approximately solve the MDP with gurobi.
+
+		This LP follows the construction given by Guestrin, et al. in
+		'Efficient Solution Algorithms for Factored MDPs', JAIR 2003.
+
+		basis: a collection of 'basis functions' each specifying some subset
+				of the variables. As an example, if (v2,v4) is in the
+				basis collection, then the following is a basis function:
+						{ 1 if x=..1.1.*
+				f(x) =	{ 0 if x=..0.1.*
+						{	or x=..1.0.*
+						{	or x=..0.0.*
+				The constant function f(x)=1 will be added to the basis
+				automatically to ensure LP feasibility. A good baseline
+				basis to try is an indicator for each variable.
 		"""
-		m = new_gurobi_model()
-		raise NotImplementedError("TODO")
+		basis = set(map(tuple, basis))
+		basis = sorted(basis.union({()})) # add constant basis function
+		m = G.Model()
 		#TODO: implement this!
+		raise NotImplementedError("TODO")
+		self.factored_model = m
+		return m
 
 	def terminal_reward(self, state_vect):
 		"""
-		TODO: comment this
+		Calculates the reward if the MDP terminates in the given state.
 		"""
 		return float(self.true_rewards.dot(state_vect) + \
 						self.false_rewards.dot(1-state_vect))
 
-	def state_name(self, state_vect):
+	def lp_var_name(self, state_vect):
 		"""
-		TODO: comment this
+		Gives the name of the LP variable used to represent the state's
+		value in the exact_LP.
 		"""
 		return "V_" + "".join([var if val else "" for var, val in \
 					zip(self.variables, state_vect)])
-
-
-def new_gurobi_model():
-		try:
-			return G.Model()
-		except NameError:
-			raise ImportError("gurobipy required")
 
 
 class PartialState:
@@ -128,7 +160,7 @@ class Outcome(PartialState):
 	"""
 	Adds literals to or deletes literals from the state.
 	
-	Performing an action will result in some associated outcome's transition 
+	Performing an action will result in some associated outcome's transition
 	being applied to the state.
 	"""
 	def transition(self, state, variable_index):
@@ -149,8 +181,8 @@ class Prereq(PartialState):
 		"""
 		Tests whether a state is consistend with the prerequisite.
 
-		A state is consistent with a prereq if all the positives are true and
-		all the negatives are false.
+		A state is consistent with a prereq if all the positives are true
+		and all the negatives are false.
 		"""
 		for v in self.pos:
 			if not state[variable_index[v]]:
@@ -163,14 +195,18 @@ class Prereq(PartialState):
 
 class Action:
 	"""
-	TODO: comment this!
+	MDP action.
+
+	Prerequisites specify the states in which the action is available.
+	Actions encode the MDP's transition function through their distributions
+	over outcomes. They also partially specify the reward function through
+	their costs.
 	"""
 	def __init__(self, name, cost, prereq, outcome_dist):
 		"""
-		outcome_dist: a mapping of outcomes to probabilities such that
-				p > 0 and sum(p) < 1
-
-		TODO: finish commenting this!
+		cost > 0
+		outcome_dist: a mapping of Outcome objects to probabilities such
+				that p > 0 and sum(p) <= 1
 		"""
 		self.name = name
 		self.cost = cost
@@ -178,18 +214,16 @@ class Action:
 		self.outcome_probs = outcome_dist
 		self.stop_prob = 1. - sum(outcome_dist.values())
 
-	#TODO: implement this!
-
-
 
 def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 				max_pos_prereqs=2, max_neg_prereqs=0, min_outs=20, \
 				max_outs=20, min_outs_per_act=1, max_outs_per_act=3, \
 				min_pos_vars_per_out=1, max_pos_vars_per_out=3, \
 				min_neg_vars_per_out=0, max_neg_vars_per_out=0, \
-				min_cost=0, max_cost=2, min_cont_prob=.8, max_cont_prob= \
-				.999, true_rwds=3, false_rwds=1, min_true_rwd=0, \
-				max_true_rwd=10, min_false_rwd=-10, max_false_rwd=0):
+				min_cost=0, max_cost=2, min_stop_prob=.001, max_stop_prob= \
+				.2, true_rwds=3, false_rwds=1, min_true_rwd=-10, \
+				max_true_rwd=10, min_false_rwd=-10, max_false_rwd=10, \
+				stop_action=True, stop_cost=2):
 	"""Creates an MDP for testing."""
 	MDP_vars = ['l'+str(i) for i in range(randrange(min_vars, max_vars+1))]
 	vars_set = set(MDP_vars)
@@ -212,11 +246,13 @@ def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 		act_outs =  sample(MDP_outs, randrange(min_outs_per_act, \
 							max_outs_per_act + 1))
 		act_probs = uniform(0,1,len(act_outs))
-		act_probs /= (act_probs.sum() / uniform(min_cont_prob, max_cont_prob))
+		act_probs /= (act_probs.sum() / (1 - uniform(min_stop_prob, \
+													max_stop_prob)))
 		MDP_acts.append(Action("a"+str(i), uniform(min_cost, max_cost), \
 						act_prereq, dict(zip(act_outs, act_probs))))
 
-	MDP_acts.append(Action("stop", 1, Prereq([],[]), {}))
+	if stop_action:
+		MDP_acts.append(Action("stop", stop_cost, Prereq([],[]), {}))
 
 	true_rwds = {v : uniform(min_true_rwd, max_true_rwd) for v in \
 				sample(MDP_vars, true_rwds)}
