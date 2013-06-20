@@ -96,6 +96,31 @@ class MDP:
 										len(self.variables)))
 			return self.states
 
+	def reachable_states(self):
+		"""
+		Searches for all states reachable from the initial state.
+
+		This set is likely to be exponentially large.
+		"""
+		try:
+			return self.reachable
+		except AttributeError:
+			pass
+		unvisited = {self.initial}
+		visited = set()
+		while unvisited:
+			state = unvisited.pop()
+			visited.add(state)
+			for action in self.actions:
+				if action.prereq.consistent(state, self.variable_index):
+					for outcome in action.outcomes:
+						next_state = outcome.transition(state, \
+										self.variable_index)
+						if next_state not in visited:
+							unvisited.add(next_state)
+		self.reachable = sorted(visited)
+		return self.reachable
+
 	def exact_LP(self):
 		"""
 		Construct an exponentially large LP to solve the MDP with gurobi.
@@ -109,7 +134,7 @@ class MDP:
 		retreived using m.getVars().
 		"""
 		m = G.Model() # Throws a NameError if gurobipy isn't installed
-		states = self.full_states()
+		states = self.reachable_states()
 		self.lp_state_vars = {}
 		for s in states:
 			s_name = "V_" + self.lp_var_name(s)
@@ -117,17 +142,24 @@ class MDP:
 		m.update()
 		m.setObjective(G.quicksum(m.getVars()) / len(states))
 		m.update()
+		useless_actions = 0 #TODO: remove
 		for state,action in product(states, self.actions):
 			if action.prereq.consistent(state, self.variable_index):
 				const = action.stop_prob * self.terminal_reward(state)
 				const -= action.cost
 				expr = G.LinExpr(float(const))
+
+				#TODO: remove
+				if all(o.transition(state, self.variable_index) == state for o in action.outcomes):
+					useless_actions += 1
+
 				for outcome,prob in action.outcome_probs.items():
 					lp_var = self.lp_state_vars[outcome.transition(state, \
 										self.variable_index)]
 					expr += self.discount * prob * lp_var
 				m.addConstr(self.lp_state_vars[state] >= expr)
 		m.update()
+		print useless_actions, "unnecessary constraints" #TODO: remove
 		return m
 
 	def factored_LP(self, basis):
@@ -169,9 +201,12 @@ class MDP:
 		"""
 		Creates a basis function for each literal, prereq, and outcome.
 		"""
-		#TODO: implement this!
-		raise NotImplementedError("TODO")
-
+		basis = [((v),()) for v in self.variables]
+		for a in self.actions:
+			basis.append(a.prereq.tup)
+			for o in a.outcomes:
+				basis.append(o.tup)
+		return basis
 
 	def lp_var_name(self, state_vect):
 		"""
@@ -201,7 +236,7 @@ class MDP:
 		a large number of iterations. For modified policy iteration, iters
 		can be set relatively low to return before convergence.
 		"""
-		states = self.full_states()
+		states = self.reachable_states()
 		for _i in range(iters):
 			new_values = {}
 			for state in states:
@@ -216,7 +251,7 @@ class MDP:
 		"""
 		State-action map that is one-step optimal according to values.
 		"""
-		states = self.full_states()
+		states = self.reachable_states()
 		new_policy = {}
 		for state in states:
 			best_action = None
@@ -243,7 +278,7 @@ class MDP:
 		should be set very high; for modified policy iteration, it can be
 		relativley small.
 		"""
-		states = self.full_states()
+		states = self.reachable_states()
 		values = {s:0 for s in states}
 		for _i in range(policy_iters):
 			old_values = values
@@ -332,6 +367,7 @@ class Action:
 		self.cost = cost
 		self.prereq = prereq
 		self.outcome_probs = outcome_dist
+		self.outcomes = sorted(outcome_dist.keys())
 		self.stop_prob = 1. - sum(outcome_dist.values())
 
 
@@ -382,13 +418,18 @@ def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 
 
 if __name__ == "__main__":
-	mdp = random_MDP(min_vars=8, max_vars=8, min_acts=8, max_acts=8)
+	mdp = random_MDP(min_vars=20, max_vars=20, min_acts=20, max_acts=20, \
+					min_outs=50, max_outs=50)
+	print mdp
+	print 2**len(mdp.variables), "total states"
+	print len(mdp.reachable_states()), "reachable states"
 	try:
 		lp = mdp.exact_LP()
+		print "LP has", len(lp.getConstrs()), "constraints"
 		lp.optimize()
 		print "linear programming value estimate:", \
 				mdp.lp_state_vars[mdp.initial].x
 	except NameError:
 		pass
-	policy, values = mdp.policy_iteration()
-	print "policy iteration value estimate:", values[mdp.initial]
+#	policy, values = mdp.policy_iteration()
+#	print "policy iteration value estimate:", values[mdp.initial]
