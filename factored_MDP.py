@@ -6,11 +6,17 @@ from itertools import product
 from numpy.random import uniform
 from numpy import zeros, array
 
-from warnings import warn
+from os import listdir
+import warnings
+warnings.formatwarning = lambda msg, *args: "warning: " + str(msg) + "\n"
 try:
 	import gurobipy as G
-except ImportError as e:
-	warn("Gurobi is required to solve MDPs by linear programming.")
+	param_file = filter(lambda fn: fn.endswith('.prm'), listdir('.'))[0]
+	G.readParams(param_file)
+except ImportError:
+	warnings.warn("Gurobi is required to solve MDPs by linear programming.")
+except:
+	warnings.warn("Failed to read parameter file.")
 
 class MDP:
 	"""
@@ -49,19 +55,40 @@ class MDP:
 		"""
 		self.variables = sorted(set(variables))
 		self.variable_index = {v:i for i,v in enumerate(self.variables)}
-		self.initial = zeros(len(self.variables), dtype=bool)
-		self.initial[[self.variable_index[v] for v in initial]] = True
+		init_state = zeros(len(self.variables), dtype=bool)
+		init_state[[self.variable_index[v] for v in initial]] = True
+		self.initial = tuple(init_state)
 		self.actions = actions
 		self.true_rewards = array([true_rwds[v] if v in true_rwds else 0 \
 								for v in self.variables])
 		self.false_rewards = array([false_rwds[v] if v in false_rwds \
 								else 0 for v in self.variables])
+		self.discount = discount
 
 	def __repr__(self):
 		s = "MDP: "
 		s += str(len(self.variables)) + " variables, "
 		s += str(len(self.actions)) + " actions."
 		return s
+	
+	def terminal_reward(self, state):
+		"""
+		Calculates the reward if the MDP terminates in the given state.
+		"""
+		state_vect = array(state)
+		return float(self.true_rewards.dot(state_vect) + \
+						self.false_rewards.dot(1-state_vect))
+
+	def full_states(self):
+		"""
+		Initializes and returns the (exponentially large) set of states.
+		"""
+		try:
+			return self.states
+		except AttributeError:
+			self.states = map(tuple, product([0,1], repeat= \
+										len(self.variables)))
+			return self.states
 
 	def exact_LP(self):
 		"""
@@ -75,12 +102,12 @@ class MDP:
 		the state's lp variable. A list of these lp variables can be
 		retreived using m.getVars().
 		"""
-		m = G.Model()
-		states =  map(array, product([0,1], repeat=len(self.variables)))
-		lp_vars = {}
+		m = G.Model() # Throws a NameError if gurobipy isn't installed
+		states = self.full_states()
+		self.exact_lp_vars = {}
 		for s in states:
 			s_name = self.lp_var_name(s)
-			lp_vars[s_name] = m.addVar(name=s_name, lb=-float('inf'))
+			self.exact_lp_vars[s] = m.addVar(name=s_name, lb=-float("inf"))
 		m.update()
 		m.setObjective(G.quicksum(m.getVars()) / len(states))
 		m.update()
@@ -90,11 +117,11 @@ class MDP:
 				const -= action.cost
 				expr = G.LinExpr(float(const))
 				for outcome,prob in action.outcome_probs.items():
-					expr += discount * prob * lp_vars[self.lp_var_name( \
-							outcome.transition(state, self.variable_index))]
-				m.addConstr(lp_vars[self.lp_var_name(state)] >= expr)
+					lp_var = self.exact_lp_vars[outcome.transition(state, \
+										self.variable_index)]
+					expr += self.discount * prob * lp_var
+				m.addConstr(self.exact_lp_vars[state] >= expr)
 		m.update()
-		self.exact_model = m
 		return m
 
 	def factored_LP(self, basis):
@@ -117,18 +144,10 @@ class MDP:
 		"""
 		basis = set(map(tuple, basis))
 		basis = sorted(basis.union({()})) # add constant basis function
-		m = G.Model()
+		m = G.Model() # Throws a NameError if gurobipy isn't installed
 		#TODO: implement this!
 		raise NotImplementedError("TODO")
-		self.factored_model = m
 		return m
-
-	def terminal_reward(self, state_vect):
-		"""
-		Calculates the reward if the MDP terminates in the given state.
-		"""
-		return float(self.true_rewards.dot(state_vect) + \
-						self.false_rewards.dot(1-state_vect))
 
 	def lp_var_name(self, state_vect):
 		"""
@@ -137,6 +156,83 @@ class MDP:
 		"""
 		return "V_" + "".join([var if val else "" for var, val in \
 					zip(self.variables, state_vect)])
+
+	def action_value(self, state, action, values):
+		"""
+		Expected next-state value of perfrming action in state according
+		to values.
+		"""
+		value = -action.cost
+		for outcome,prob in action.outcome_probs.items():
+			next_state = outcome.transition(state, self.variable_index)
+			value += self.discount * prob * values[next_state]
+		value += action.stop_prob * self.terminal_reward(state)
+		return value
+
+	def state_values(self, policy, values, iters=1000, cnvrg_thresh=1e-6):
+		"""
+		Expected value estimate for each state when following policy.
+
+		An accurate estimate requires convergence, which may require a
+		a large number of iterations. For modified policy iteration, iters
+		can be set relatively low to return before convergence.
+		"""
+		states = self.full_states()
+		for _i in range(iters):
+			new_values = {}
+			for state in states:
+				action = policy[state]
+				new_values[state] = self.action_value(state, action, values)
+			if converged(values, new_values, cnvrg_thresh):
+				break
+			values = new_values
+		return new_values
+
+	def greedy_policy(self, values):
+		"""
+		State-action map that is one-step optimal according to values.
+		"""
+		states = self.full_states()
+		new_policy = {}
+		for state in states:
+			best_action = None
+			best_value = -float("inf")
+			for action in self.actions:
+				if action.prereq.consistent(state, self.variable_index):
+					act_val = self.action_value(state, action, values) 
+					if act_val > best_value:
+						best_value = act_val
+						best_action = action
+			new_policy[state] = best_action
+		return new_policy
+
+	def policy_iteration(self, policy_iters=1000, value_iters=100, \
+						cnvrg_thresh=1e-6):
+		"""
+		Computes optimal policy and value functions for the MDP.
+
+		This algorithm represents the full state space and therefore 
+		requires time and space exponential in the size of the factored MDP.
+
+		If policy_iters is reached, the algorithm has not converged and the
+		results may be sub-optimal. For true policy iteration, value_iters
+		should be set very high; for modified policy iteration, it can be
+		relativley small.
+		"""
+		states = self.full_states()
+		values = {s:0 for s in states}
+		for _i in range(policy_iters):
+			old_values = values
+			policy = self.greedy_policy(values)
+			values = self.state_values(policy, values, value_iters, \
+										cnvrg_thresh)
+			if converged(old_values, values, cnvrg_thresh):
+				values_changed = False
+		return policy, values
+
+
+def converged(old_vals, new_vals, thresh=1e-6):
+	return all((abs(new_vals[s] - old_vals[s]) < thresh for s in new_vals))
 
 
 class PartialState:
@@ -170,7 +266,7 @@ class Outcome(PartialState):
 		next_state = array(state)
 		next_state[[variable_index[v] for v in self.pos]] = True
 		next_state[[variable_index[v] for v in self.neg]] = False
-		return next_state
+		return tuple(next_state)
 
 
 class Prereq(PartialState):
@@ -225,7 +321,7 @@ def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 				max_true_rwd=10, min_false_rwd=-10, max_false_rwd=10, \
 				stop_action=True, stop_cost=2):
 	"""Creates an MDP for testing."""
-	MDP_vars = ['l'+str(i) for i in range(randrange(min_vars, max_vars+1))]
+	MDP_vars = ["l"+str(i) for i in range(randrange(min_vars, max_vars+1))]
 	vars_set = set(MDP_vars)
 	
 	MDP_outs = []
@@ -262,6 +358,13 @@ def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 
 
 if __name__ == "__main__":
-	mdp = random_MDP()
-	lp = mdp.exact_LP()
-	lp.optimize()
+	mdp = random_MDP(min_vars=8, max_vars=8, min_acts=8, max_acts=8)
+	try:
+		lp = mdp.exact_LP()
+		lp.optimize()
+		print "linear programming value estimate:", \
+				mdp.exact_lp_vars[mdp.initial].x
+	except NameError:
+		pass
+	policy, values = mdp.policy_iteration()
+	print "policy iteration value estimate:", values[mdp.initial]
