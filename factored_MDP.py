@@ -6,6 +6,8 @@ from itertools import product
 from numpy.random import uniform
 from numpy import zeros, array
 
+
+# The following simply imports Gurobi and looks for Gurobi parameters
 from os import listdir
 import warnings
 warnings.formatwarning = lambda msg, *args: "warning: " + str(msg) + "\n"
@@ -17,6 +19,8 @@ except ImportError:
 	warnings.warn("Gurobi is required to solve MDPs by linear programming.")
 except:
 	warnings.warn("Failed to read parameter file.")
+
+
 
 class MDP:
 	"""
@@ -39,8 +43,10 @@ class MDP:
 		- The only rewards other than fixed action costs are received upon 
 			termination, and are additive across single-variable functions.
 		- By default, the discount rate is 1.0, which means there is no 
-			explicit discounting. This assumes that the sum of outcome 
-			probabilities will be strictly less than 1 for all actions.
+			explicit discounting. This assumes that a terminal state will
+			be reached with probability 1. One way this can happen is if
+			the sum of outcome probabilities is strictly less than 1 for
+			all actions.
 	"""
 	def __init__(self, variables, initial, actions, true_rwds, false_rwds, \
 				discount=1.):
@@ -104,10 +110,10 @@ class MDP:
 		"""
 		m = G.Model() # Throws a NameError if gurobipy isn't installed
 		states = self.full_states()
-		self.exact_lp_vars = {}
+		self.lp_state_vars = {}
 		for s in states:
-			s_name = self.lp_var_name(s)
-			self.exact_lp_vars[s] = m.addVar(name=s_name, lb=-float("inf"))
+			s_name = "V_" + self.lp_var_name(s)
+			self.lp_state_vars[s] = m.addVar(name=s_name, lb=-float("inf"))
 		m.update()
 		m.setObjective(G.quicksum(m.getVars()) / len(states))
 		m.update()
@@ -117,10 +123,10 @@ class MDP:
 				const -= action.cost
 				expr = G.LinExpr(float(const))
 				for outcome,prob in action.outcome_probs.items():
-					lp_var = self.exact_lp_vars[outcome.transition(state, \
+					lp_var = self.lp_state_vars[outcome.transition(state, \
 										self.variable_index)]
 					expr += self.discount * prob * lp_var
-				m.addConstr(self.exact_lp_vars[state] >= expr)
+				m.addConstr(self.lp_state_vars[state] >= expr)
 		m.update()
 		return m
 
@@ -131,30 +137,48 @@ class MDP:
 		This LP follows the construction given by Guestrin, et al. in
 		'Efficient Solution Algorithms for Factored MDPs', JAIR 2003.
 
-		basis: a collection of 'basis functions' each specifying some subset
-				of the variables. As an example, if (v2,v4) is in the
-				basis collection, then the following is a basis function:
-						{ 1 if x=..1.1.*
-				f(x) =	{ 0 if x=..0.1.*
-						{	or x=..1.0.*
-						{	or x=..0.0.*
+		basis: a collection of 'basis functions' each specifying two tuples
+				of variables. The first tuple specifies positive literals
+				and the second specifies negative literals; when all these
+				literals have their specified values f=1. As an example, if
+				((v2,v4),(v5)) is in the 'basis' collection, then the
+				following is a basis function:
+						{ 1 if x=..1.10.*
+				f(x) =	{ 0 if x=..0....*
+						{	or x=....0..*
+						{	or x=.....1.*
 				The constant function f(x)=1 will be added to the basis
 				automatically to ensure LP feasibility. A good baseline
 				basis to try is an indicator for each variable.
 		"""
-		basis = set(map(tuple, basis))
-		basis = sorted(basis.union({()})) # add constant basis function
 		m = G.Model() # Throws a NameError if gurobipy isn't installed
+		basis = sorted(set(basis).union({((),())}))
+
+		self.lp_basis_vars = {}
+		for b in basis:
+			b_name = "W_+" + self.lp_var_name(b[0])
+			b_name += "_-" + self.lp_var_name(b[1])
+			self.lp_basis_vars[b] = m.addVar(name=b_name, lb=-float("inf"))
+		
+		#TODO: finish implementing this!
+		raise NotImplementedError("TODO")
+
+		return m
+
+	def default_basis(self):
+		"""
+		Creates a basis function for each literal, prereq, and outcome.
+		"""
 		#TODO: implement this!
 		raise NotImplementedError("TODO")
-		return m
+
 
 	def lp_var_name(self, state_vect):
 		"""
 		Gives the name of the LP variable used to represent the state's
 		value in the exact_LP.
 		"""
-		return "V_" + "".join([var if val else "" for var, val in \
+		return "".join([var if val else "" for var, val in \
 					zip(self.variables, state_vect)])
 
 	def action_value(self, state, action, values):
@@ -363,7 +387,7 @@ if __name__ == "__main__":
 		lp = mdp.exact_LP()
 		lp.optimize()
 		print "linear programming value estimate:", \
-				mdp.exact_lp_vars[mdp.initial].x
+				mdp.lp_state_vars[mdp.initial].x
 	except NameError:
 		pass
 	policy, values = mdp.policy_iteration()
