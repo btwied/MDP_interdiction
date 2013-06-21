@@ -47,6 +47,8 @@ class MDP:
 			be reached with probability 1. One way this can happen is if
 			the sum of outcome probabilities is strictly less than 1 for
 			all actions.
+		- At any time the agent can stop and receive reward for the
+			current state.
 	"""
 	def __init__(self, variables, initial, actions, true_rwds, false_rwds, \
 				discount=1.):
@@ -136,30 +138,32 @@ class MDP:
 		m = G.Model() # Throws a NameError if gurobipy isn't installed
 		states = self.reachable_states()
 		self.lp_state_vars = {}
+
+		# add a variable to the LP to represent the value of each state
 		for s in states:
 			s_name = "V_" + self.lp_var_name(s)
-			self.lp_state_vars[s] = m.addVar(name=s_name, lb=-float("inf"))
+			self.lp_state_vars[s] = m.addVar(name=s_name, \
+												lb=-float("inf"))
 		m.update()
 		m.setObjective(G.quicksum(m.getVars()) / len(states))
-		m.update()
-		useless_actions = 0 #TODO: remove
+
+		# can always cash out
+		for s,v in self.lp_state_vars.items():
+			m.addConstr(v >= self.terminal_reward(s))
+
+		# backpropagation
 		for state,action in product(states, self.actions):
-			if action.prereq.consistent(state, self.variable_index):
+			if action.prereq.consistent(state, self.variable_index) and \
+					action.can_change(state, self.variable_index):
 				const = action.stop_prob * self.terminal_reward(state)
 				const -= action.cost
 				expr = G.LinExpr(float(const))
-
-				#TODO: remove
-				if all(o.transition(state, self.variable_index) == state for o in action.outcomes):
-					useless_actions += 1
-
 				for outcome,prob in action.outcome_probs.items():
 					lp_var = self.lp_state_vars[outcome.transition(state, \
 										self.variable_index)]
 					expr += self.discount * prob * lp_var
 				m.addConstr(self.lp_state_vars[state] >= expr)
 		m.update()
-		print useless_actions, "unnecessary constraints" #TODO: remove
 		return m
 
 	def factored_LP(self, basis):
@@ -241,7 +245,11 @@ class MDP:
 			new_values = {}
 			for state in states:
 				action = policy[state]
-				new_values[state] = self.action_value(state, action, values)
+				if action == None:
+					new_values[state] = self.terminal_reward(state)
+				else:
+					new_values[state] = self.action_value(state, action, \
+															values)
 			if converged(values, new_values, cnvrg_thresh):
 				break
 			values = new_values
@@ -255,7 +263,7 @@ class MDP:
 		new_policy = {}
 		for state in states:
 			best_action = None
-			best_value = -float("inf")
+			best_value = self.terminal_reward(state)
 			for action in self.actions:
 				if action.prereq.consistent(state, self.variable_index):
 					act_val = self.action_value(state, action, values) 
@@ -327,6 +335,9 @@ class Outcome(PartialState):
 		next_state[[variable_index[v] for v in self.neg]] = False
 		return tuple(next_state)
 
+	def changes(self, state, variable_index):
+		return self.transition(state, variable_index) != state
+
 
 class Prereq(PartialState):
 	"""
@@ -370,6 +381,9 @@ class Action:
 		self.outcomes = sorted(outcome_dist.keys())
 		self.stop_prob = 1. - sum(outcome_dist.values())
 
+	def can_change(self, state, variable_index):
+		return any(o.changes(state, variable_index) for o in self.outcomes)
+
 
 def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 				max_pos_prereqs=2, max_neg_prereqs=0, min_outs=20, \
@@ -378,8 +392,7 @@ def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 				min_neg_vars_per_out=0, max_neg_vars_per_out=0, \
 				min_cost=0, max_cost=2, min_stop_prob=.001, max_stop_prob= \
 				.2, true_rwds=3, false_rwds=1, min_true_rwd=-10, \
-				max_true_rwd=10, min_false_rwd=-10, max_false_rwd=10, \
-				stop_action=True, stop_cost=2):
+				max_true_rwd=10, min_false_rwd=-10, max_false_rwd=10):
 	"""Creates an MDP for testing."""
 	MDP_vars = ["l"+str(i) for i in range(randrange(min_vars, max_vars+1))]
 	vars_set = set(MDP_vars)
@@ -407,9 +420,6 @@ def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 		MDP_acts.append(Action("a"+str(i), uniform(min_cost, max_cost), \
 						act_prereq, dict(zip(act_outs, act_probs))))
 
-	if stop_action:
-		MDP_acts.append(Action("stop", stop_cost, Prereq([],[]), {}))
-
 	true_rwds = {v : uniform(min_true_rwd, max_true_rwd) for v in \
 				sample(MDP_vars, true_rwds)}
 	false_rwds = {v : uniform(min_false_rwd, max_false_rwd) for v in \
@@ -418,6 +428,7 @@ def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 
 
 if __name__ == "__main__":
+#	mdp = random_MDP()
 	mdp = random_MDP(min_vars=20, max_vars=20, min_acts=20, max_acts=20, \
 					min_outs=50, max_outs=50)
 	print mdp
@@ -425,7 +436,7 @@ if __name__ == "__main__":
 	print len(mdp.reachable_states()), "reachable states"
 	try:
 		lp = mdp.exact_LP()
-		print "LP has", len(lp.getConstrs()), "constraints"
+		print len(lp.getConstrs()), "LP constraints"
 		lp.optimize()
 		print "linear programming value estimate:", \
 				mdp.lp_state_vars[mdp.initial].x
