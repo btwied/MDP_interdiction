@@ -6,19 +6,15 @@ from itertools import product
 from numpy.random import uniform
 from numpy import zeros, array
 
+from argparse import ArgumentParser
 
-# The following simply imports Gurobi and looks for Gurobi parameters
-from os import listdir
+# import Gurobi but don't crash if it isn't installed
 import warnings
 warnings.formatwarning = lambda msg, *args: "warning: " + str(msg) + "\n"
 try:
 	import gurobipy as G
-	param_file = filter(lambda fn: fn.endswith('.prm'), listdir('.'))[0]
-	G.readParams(param_file)
 except ImportError:
 	warnings.warn("Gurobi is required to solve MDPs by linear programming.")
-except:
-	warnings.warn("Failed to read parameter file.")
 
 
 
@@ -188,10 +184,10 @@ class MDP:
 				basis to try is an indicator for each variable.
 		"""
 		m = G.Model() # Throws a NameError if gurobipy isn't installed
-		basis = sorted(set(basis).union({((),())}))
+		self.basis = sorted(set(basis).union({((),())}))
 
 		self.lp_basis_vars = {}
-		for b in basis:
+		for b in self.basis:
 			b_name = "W_+" + self.lp_var_name(b[0])
 			b_name += "_-" + self.lp_var_name(b[1])
 			self.lp_basis_vars[b] = m.addVar(name=b_name, lb=-float("inf"))
@@ -384,6 +380,9 @@ class Action:
 	def can_change(self, state, variable_index):
 		return any(o.changes(state, variable_index) for o in self.outcomes)
 
+	def __repr__(self):
+		return "MDP action:", self.name
+
 
 def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 				max_pos_prereqs=2, max_neg_prereqs=0, min_outs=20, \
@@ -427,20 +426,56 @@ def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 	return MDP(MDP_vars, [], MDP_acts, true_rwds, false_rwds)
 
 
-if __name__ == "__main__":
-#	mdp = random_MDP()
-	mdp = random_MDP(min_vars=20, max_vars=20, min_acts=20, max_acts=20, \
-					min_outs=50, max_outs=50)
+def parse_args():
+	parser = ArgumentParser ()
+	parser.add_argument("-prm", type=str, default="", help="Optional "+\
+						"Gurobi parameter file to import.")
+	parser.add_argument("--exact_lp", action="store_true", help="Set "+\
+						"this to solve the MDP via linear programming.")
+	parser.add_argument("--factored_lp", action="store_true", help="Set "+\
+						"this to approximately solve the MDP via "+\
+						"factored-MDP linear programming.")
+	parser.add_argument("--policy_iter", action="store_true", help="Set"+\
+						"this to solve the MDP via policy iteration.")
+	return parser.parse_args()
+
+
+def main(args):
+	if args.policy_iter:
+		mdp = random_MDP(min_vars=8, max_vars=8, min_acts=8, max_acts=8, \
+					min_outs=16, max_outs=16)
+	elif args.exact_lp:
+		mdp = random_MDP(min_vars=16, max_vars=16, min_acts=16, \
+					max_acts=16, min_outs=32, max_outs=32)
+	else:
+		mdp = random_MDP(min_vars=32, max_vars=32, min_acts=32, \
+					max_acts=32, min_outs=64, max_outs=64)
+	
 	print mdp
-	print 2**len(mdp.variables), "total states"
-	print len(mdp.reachable_states()), "reachable states"
-	try:
+	print "2^" + str(len(mdp.variables)), "=",  2**len(mdp.variables), \
+			"total states"
+	if args.policy_iter or args.exact_lp:
+		print len(mdp.reachable_states()), "reachable states"
+
+	if args.prm != "":
+		G.readParams(args.prm)
+
+	if args.exact_lp:
 		lp = mdp.exact_LP()
-		print len(lp.getConstrs()), "LP constraints"
 		lp.optimize()
-		print "linear programming value estimate:", \
+		print "excact linear programming MDP value:", \
 				mdp.lp_state_vars[mdp.initial].x
-	except NameError:
-		pass
-#	policy, values = mdp.policy_iteration()
-#	print "policy iteration value estimate:", values[mdp.initial]
+
+	if args.factored_lp:
+		lp = mdp.factored_LP()
+		lp.optimize()
+		print "factored linear programming approximate MDP value:", \
+				mdp.lp_basis_vars[mdp.initial].x
+
+	if args.policy_iter:
+		policy, values = mdp.policy_iteration()
+		print "policy iteration MDP value:", values[mdp.initial]
+
+if __name__ == "__main__":
+	args = parse_args()
+	main(args)
