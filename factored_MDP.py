@@ -141,7 +141,7 @@ class MDP:
 			self.lp_state_vars[s] = m.addVar(name=s_name, \
 												lb=-float("inf"))
 		m.update()
-		m.setObjective(G.quicksum(m.getVars()) / len(states))
+		m.setObjective(self.lp_state_vars[self.initial])
 
 		# can always cash out
 		for s,v in self.lp_state_vars.items():
