@@ -137,11 +137,12 @@ class MDP:
 
 		# add a variable to the LP to represent the value of each state
 		for s in states:
-			s_name = "V_" + self.lp_var_name(s)
-			self.lp_state_vars[s] = m.addVar(name=s_name, \
+			self.lp_state_vars[s] = m.addVar(name=self.state_name(s), \
 												lb=-float("inf"))
 		m.update()
-		m.setObjective(self.lp_state_vars[self.initial])
+		# since we only care about reachable states, this suffices:
+#		m.setObjective(self.lp_state_vars[self.initial])
+		m.setObjective(G.quicksum(m.getVars()))
 
 		# can always cash out
 		for s,v in self.lp_state_vars.items():
@@ -169,7 +170,7 @@ class MDP:
 		This LP follows the construction given by Guestrin, et al. in
 		'Efficient Solution Algorithms for Factored MDPs', JAIR 2003.
 
-		basis: a collection of 'basis functions' each specifying two tuples
+		basis: a collection of PartialStates each specifying two tuples
 				of variables. The first tuple specifies positive literals
 				and the second specifies negative literals; when all these
 				literals have their specified values f=1. As an example, if
@@ -180,35 +181,34 @@ class MDP:
 						{	or x=....0..*
 						{	or x=.....1.*
 				The constant function f(x)=1 will be added to the basis
-				automatically to ensure LP feasibility. A good baseline
-				basis to try is an indicator for each variable.
+				automatically to ensure LP feasibility. Using default_basis
+				is probably a good place to start.
 		"""
 		m = G.Model() # Throws a NameError if gurobipy isn't installed
-		self.basis = sorted(set(basis).union({((),())}))
+		self.basis = sorted(set(basis).union({PartialState((),())}))
 
 		self.lp_basis_vars = {}
 		for b in self.basis:
-			b_name = "W_+" + self.lp_var_name(b[0])
-			b_name += "_-" + self.lp_var_name(b[1])
-			self.lp_basis_vars[b] = m.addVar(name=b_name, lb=-float("inf"))
+			self.lp_basis_vars[b] = m.addVar(name=str(b), lb=-float("inf"))
+		m.update()
+		# This should be based on state relevance weights:
+		m.setObjective(G.quicksum(m.getVars()))
 		
 		#TODO: finish implementing this!
 		raise NotImplementedError("TODO")
-
 		return m
 
 	def default_basis(self):
 		"""
 		Creates a basis function for each literal, prereq, and outcome.
 		"""
-		basis = [((v),()) for v in self.variables]
+		basis = [PartialState((v),()) for v in self.variables]
 		for a in self.actions:
-			basis.append(a.prereq.tup)
-			for o in a.outcomes:
-				basis.append(o.tup)
+			basis.append(a.prereq)
+			basis.extend(a.outcomes)
 		return basis
 
-	def lp_var_name(self, state_vect):
+	def state_name(self, state_vect):
 		"""
 		Gives the name of the LP variable used to represent the state's
 		value in the exact_LP.
@@ -313,6 +313,14 @@ class PartialState:
 			return cmp(self.tup, other.tup)
 		except AttributeError:
 			return cmp(self.tup, other)
+
+	def __repr__(self):
+		try:
+			return self._str
+		except NameError:
+			self._str = "+" + "".join(map(str, self.pos)) + \
+						"_-" + "".join(map(str, self.neg))
+			return self._str
 
 
 class Outcome(PartialState):
@@ -462,9 +470,12 @@ def main(args):
 
 	if args.exact_lp:
 		lp = mdp.exact_LP()
+		print len(lp.getConstrs()), "LP constraints"
 		lp.optimize()
 		print "excact linear programming MDP value:", \
 				mdp.lp_state_vars[mdp.initial].x
+		unique_values = unique_floats(var.x for var in lp.getVars())
+		print len(unique_values), "unique state-values, according to LP"
 
 	if args.factored_lp:
 		lp = mdp.factored_LP()
@@ -475,6 +486,15 @@ def main(args):
 	if args.policy_iter:
 		policy, values = mdp.policy_iteration()
 		print "policy iteration MDP value:", values[mdp.initial]
+		unique_values = unique_floats(values.values())
+		print len(unique_values), "unique state-values, according to PI"
+
+def unique_floats(collection, tolerance=1e-6):
+	unique = []
+	for flt in set(collection):
+		if all(abs(flt-u) > tolerance for u in unique):
+			unique.append(flt)
+	return unique
 
 if __name__ == "__main__":
 	args = parse_args()
