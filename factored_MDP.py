@@ -119,7 +119,7 @@ class MDP:
 		self.reachable = sorted(visited)
 		return self.reachable
 
-	def exact_LP(self):
+	def exact_primal_LP(self):
 		"""
 		Construct an exponentially large LP to solve the MDP with gurobi.
 
@@ -163,7 +163,7 @@ class MDP:
 		m.update()
 		return m
 
-	def factored_LP(self, basis):
+	def factored_primal_LP(self, basis):
 		"""
 		Construct a factored LP to approximately solve the MDP with gurobi.
 
@@ -198,6 +198,12 @@ class MDP:
 		raise NotImplementedError("TODO")
 		return m
 
+	def exact_dual_LP(self):
+		raise NotImplementedError("TODO")
+
+	def factored_dual_LP(self, basis):
+		raise NotImplementedError("TODO")
+
 	def default_basis(self):
 		"""
 		Creates a basis function for each literal, prereq, and outcome.
@@ -211,7 +217,7 @@ class MDP:
 	def state_name(self, state_vect):
 		"""
 		Gives the name of the LP variable used to represent the state's
-		value in the exact_LP.
+		value in the exact_LPs.
 		"""
 		return "".join([var if val else "" for var, val in \
 					zip(self.variables, state_vect)])
@@ -438,11 +444,17 @@ def parse_args():
 	parser = ArgumentParser ()
 	parser.add_argument("-prm", type=str, default="", help="Optional "+\
 						"Gurobi parameter file to import.")
-	parser.add_argument("--exact_lp", action="store_true", help="Set "+\
-						"this to solve the MDP via linear programming.")
-	parser.add_argument("--factored_lp", action="store_true", help="Set "+\
-						"this to approximately solve the MDP via "+\
+	parser.add_argument("--exact_primal", action="store_true", help="Set "+\
+						"this to compute values via linear programming.")
+	parser.add_argument("--factored_primal", action="store_true", help= \
+						"Set this compute approximate values via "+\
 						"factored-MDP linear programming.")
+	parser.add_argument("--exact_dual", action="store_true", help="Set "+\
+						"this to compute an optimal policy via dual " +\
+						"linear programming.")
+	parser.add_argument("--factored_dual", action="store_true", help= \
+						"Set this compute an approximately optimal " +\
+						"policy via factored-MDP dual linear programming.")
 	parser.add_argument("--policy_iter", action="store_true", help="Set"+\
 						"this to solve the MDP via policy iteration.")
 	return parser.parse_args()
@@ -462,26 +474,40 @@ def main(args):
 	print mdp
 	print "2^" + str(len(mdp.variables)), "=",  2**len(mdp.variables), \
 			"total states"
-	if args.policy_iter or args.exact_lp:
+	if args.policy_iter or args.exact_primal or args.exact_dual:
 		print len(mdp.reachable_states()), "reachable states"
 
 	if args.prm != "":
 		G.readParams(args.prm)
 
-	if args.exact_lp:
-		lp = mdp.exact_LP()
+	if args.exact_primal:
+		lp = mdp.exact_primal_LP()
 		print len(lp.getConstrs()), "LP constraints"
 		lp.optimize()
-		print "excact linear programming MDP value:", \
+		print "excact primal linear programming initial state value:", \
 				mdp.lp_state_vars[mdp.initial].x
-		unique_values = unique_floats(var.x for var in lp.getVars())
-		print len(unique_values), "unique state-values, according to LP"
+#		unique_values = unique_floats(var.x for var in lp.getVars())
+#		print len(unique_values), "unique state-values, according to LP"
 
-	if args.factored_lp:
-		lp = mdp.factored_LP()
+	if args.factored_primal:
+		lp = mdp.factored_primalLP()
 		lp.optimize()
-		print "factored linear programming approximate MDP value:", \
-				mdp.lp_basis_vars[mdp.initial].x
+		print "factored primal linear programming approximate initial "+\
+				"state value:", mdp.lp_basis_vars[mdp.initial].x
+
+	if args.exact_dual:
+		lp = mdp.exact_dual_LP()
+		print len(lp.getConstrs()), "LP constraints"
+		lp.optimize()
+		print "excact dual linear programming initial state policy:", \
+				mdp.lp_state_vars[mdp.initial].x
+
+	if args.factored_dual:
+		lp = mdp.factored_dual_LP()
+		lp.optimize()
+		print "factored primal linear programming approximate initial "+\
+				"state value:", mdp.lp_basis_vars[mdp.initial].x
+
 
 	if args.policy_iter:
 		policy, values = mdp.policy_iteration()
