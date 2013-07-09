@@ -8,7 +8,7 @@ from numpy import zeros, array
 
 from argparse import ArgumentParser
 
-# import Gurobi but don't crash if it isn't installed
+# import Gurobi but don't crash if it wasn't loaded
 import warnings
 warnings.formatwarning = lambda msg, *args: "warning: " + str(msg) + "\n"
 try:
@@ -38,24 +38,21 @@ class MDP:
 		- Outcomes specify some variables made true and some made false.
 		- The only rewards other than fixed action costs are received upon 
 			termination, and are additive across single-variable functions.
-		- By default, the discount rate is 1.0, which means there is no 
-			explicit discounting. This assumes that a terminal state will
-			be reached with probability 1. One way this can happen is if
-			the sum of outcome probabilities is strictly less than 1 for
-			all actions.
+		- Discount rate = 1.0, which means there is no explicit discounting.
+			This assumes that a terminal state will be reached with
+			probability 1. One way this can happen is if the sum of outcome
+			probabilities is strictly less than 1 for all actions.
 		- At any time the agent can stop and receive reward for the
 			current state.
 	"""
-	def __init__(self, variables, initial, actions, true_rwds, false_rwds, \
-				discount=1.):
+	def __init__(self, variables, initial, actions, true_rwds, false_rwds):
 		"""
 		variables: a collection of variable names
 		initial: the subset of variables that are initially True
-		actions: a collection of Action objects.
+		actions: a collection of Action objects; none may be named STOP.
 		true_rwds: mapping {v:r}, where reward r is received if v=True
 				upon termination.
 		true_rwds: same, but v=False
-		discount: 0 < discount <= 1
 		"""
 		self.variables = sorted(set(variables))
 		self.variable_index = {v:i for i,v in enumerate(self.variables)}
@@ -67,7 +64,6 @@ class MDP:
 								for v in self.variables])
 		self.false_rewards = array([false_rwds[v] if v in false_rwds \
 								else 0 for v in self.variables])
-		self.discount = discount
 
 	def __repr__(self):
 		s = "MDP: "
@@ -106,6 +102,7 @@ class MDP:
 			pass
 		unvisited = {self.initial}
 		visited = set()
+		self.reachable = {self.initial:set()}
 		while unvisited:
 			state = unvisited.pop()
 			visited.add(state)
@@ -114,9 +111,11 @@ class MDP:
 					for outcome in action.outcomes:
 						next_state = outcome.transition(state, \
 										self.variable_index)
+						parents = self.reachable.get(next_state,set())
+						parents.add((state,action))
+						self.reachable[next_state] = parents
 						if next_state not in visited:
 							unvisited.add(next_state)
-		self.reachable = sorted(visited)
 		return self.reachable
 
 	def exact_primal_LP(self):
@@ -129,24 +128,24 @@ class MDP:
 		The solution to this LP is the average value over all states. The
 		the value an individual state can be extracted from the var.x of
 		the state's lp variable. A list of these lp variables can be
-		retreived using m.getVars().
+		retreived using lp.getVars().
 		"""
-		m = G.Model() # Throws a NameError if gurobipy isn't installed
+		lp = G.Model() # Throws a NameError if gurobipy wasn't loaded
 		states = self.reachable_states()
-		self.lp_state_vars = {}
+		self.primal_state_vars = {}
 
 		# add a variable to the LP to represent the value of each state
 		for s in states:
-			self.lp_state_vars[s] = m.addVar(name=self.state_name(s), \
+			self.primal_state_vars[s] = lp.addVar(name=self.state_name(s), \
 												lb=-float("inf"))
-		m.update()
+		lp.update()
 		# since we only care about reachable states, this suffices:
-		m.setObjective(self.lp_state_vars[self.initial])
-#		m.setObjective(G.quicksum(m.getVars()))
+		lp.setObjective(self.primal_state_vars[self.initial])
+#		lp.setObjective(G.quicksum(lp.getVars()))
 
 		# can always cash out
-		for s,v in self.lp_state_vars.items():
-			m.addConstr(v >= self.terminal_reward(s))
+		for s,v in self.primal_state_vars.items():
+			lp.addConstr(v >= self.terminal_reward(s))
 
 		# backpropagation
 		for state,action in product(states, self.actions):
@@ -156,12 +155,12 @@ class MDP:
 				const -= action.cost
 				expr = G.LinExpr(float(const))
 				for outcome,prob in action.outcome_probs.items():
-					lp_var = self.lp_state_vars[outcome.transition(state, \
-										self.variable_index)]
-					expr += self.discount * prob * lp_var
-				m.addConstr(self.lp_state_vars[state] >= expr)
-		m.update()
-		return m
+					lp_var = self.primal_state_vars[outcome.transition( \
+									state, self.variable_index)]
+					expr += prob * lp_var
+				lp.addConstr(self.primal_state_vars[state] >= expr)
+		lp.update()
+		return lp
 
 	def factored_primal_LP(self, basis):
 		"""
@@ -184,34 +183,60 @@ class MDP:
 				automatically to ensure LP feasibility. Using default_basis
 				is probably a good place to start.
 		"""
-		m = G.Model() # Throws a NameError if gurobipy isn't installed
+		lp = G.Model() # Throws a NameError if gurobipy wasn't loaded
 		self.basis = sorted(set(basis).union({PartialState((),())}))
 
 		self.lp_basis_vars = {}
 		for b in self.basis:
-			self.lp_basis_vars[b] = m.addVar(name=str(b), lb=-float("inf"))
-		m.update()
+			self.lp_basis_vars[b] = lp.addVar(name=str(b), lb=-float("inf"))
+		lp.update()
 		# This should be based on state relevance weights:
-		m.setObjective(G.quicksum(m.getVars()))
+		lp.setObjective(G.quicksum(lp.getVars()))
 		
 		#TODO: finish implementing this!
 		raise NotImplementedError("TODO")
-		return m
+		return lp
 
 	def exact_dual_LP(self):
-		m = G.Model() # Throws a NameError if gurobipy isn't installed
+		lp = G.Model() # Throws a NameError if gurobipy wasn't loaded
 		states = self.reachable_states()
-		self.lp_state_vars = {}
+		self.dual_sa_vars = G.tuplelist()
 
-		for a,s in product(self.actions, states):
-			n = a.name + "_" + self.state_name(s)
-			self.lp_state_vars[(a,s)] = m.addVar(name=n, lb=0, ub=1)
-		m.update()
+		for s in states:
+			n = self.state_name(s)
+			self.dual_sa_vars.append((s, "STOP", lp.addVar(name=n+"_STOP", \
+					lb=0)))
+			for a in self.actions:
+				if a.prereq.consistent(s, self.variable_index):
 
-		m.setObjective()
+					self.dual_sa_vars.append((s, a, lp.addVar(name=n+"_"+\
+							a.name, lb=0)))
+		lp.update()
 
+		# set objective
+		obj = G.LinExpr()
+		for s,a,var in self.dual_sa_vars:
+			rew = self.terminal_reward(s)
+			if a == "STOP":
+				obj += rew * var
+			else:
+				obj += (a.stop_prob * rew - a.cost) * var
+		lp.setObjective(obj, G.GRB.MAXIMIZE)
 
-		raise NotImplementedError("TODO")
+		# set constraints
+		for s in states:
+			constr = G.quicksum([v for _,a,v in \
+						self.dual_sa_vars.select(s)])
+			for parent,action in self.reachable[s]:
+				prob = action.trans_prob(parent, s, self.variable_index)
+				var = self.dual_sa_vars.select(parent,action)[0][2]
+				constr -= prob * var
+			if s == self.initial:
+				lp.addConstr(constr, G.GRB.EQUAL, G.LinExpr(1))
+			else:
+				lp.addConstr(constr, G.GRB.EQUAL, G.LinExpr(0))
+		lp.update()
+		return lp
 
 	def factored_dual_LP(self, basis):
 		raise NotImplementedError("TODO")
@@ -242,7 +267,7 @@ class MDP:
 		value = -action.cost
 		for outcome,prob in action.outcome_probs.items():
 			next_state = outcome.transition(state, self.variable_index)
-			value += self.discount * prob * values[next_state]
+			value += prob * values[next_state]
 		value += action.stop_prob * self.terminal_reward(state)
 		return value
 
@@ -402,12 +427,28 @@ class Action:
 		self.outcome_probs = outcome_dist
 		self.outcomes = sorted(outcome_dist.keys())
 		self.stop_prob = 1. - sum(outcome_dist.values())
+	
+	def trans_prob(self, pre_state, post_state, variable_index):
+		prob = 0
+		for o,p in self.outcome_probs.items():
+			if o.transition(pre_state, variable_index) == post_state:
+				prob += p
+		return prob
 
 	def can_change(self, state, variable_index):
 		return any(o.changes(state, variable_index) for o in self.outcomes)
 
 	def __repr__(self):
 		return "MDP action: " + self.name
+
+	def __hash__(self):
+		return hash(self.name)
+
+	def __cmp__(self, other):
+		try:
+			return cmp(self.name, other.name)
+		except AttributeError:
+			return cmp(self.name, other)
 
 
 def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
@@ -476,7 +517,7 @@ def main(args):
 	if args.policy_iter:
 		mdp = random_MDP(min_vars=8, max_vars=8, min_acts=8, max_acts=8, \
 					min_outs=16, max_outs=16)
-	elif args.exact_lp:
+	elif args.exact_primal or args.exact_dual:
 		mdp = random_MDP(min_vars=16, max_vars=16, min_acts=16, \
 					max_acts=16, min_outs=32, max_outs=32)
 	else:
@@ -494,10 +535,10 @@ def main(args):
 
 	if args.exact_primal:
 		lp = mdp.exact_primal_LP()
-		print len(lp.getConstrs()), "LP constraints"
+		print len(lp.getConstrs()), "primal LP constraints"
 		lp.optimize()
 		print "excact primal linear programming initial state value:", \
-				mdp.lp_state_vars[mdp.initial].x
+				mdp.primal_state_vars[mdp.initial].x
 #		unique_values = unique_floats(var.x for var in lp.getVars())
 #		print len(unique_values), "unique state-values, according to LP"
 
@@ -509,10 +550,14 @@ def main(args):
 
 	if args.exact_dual:
 		lp = mdp.exact_dual_LP()
-		print len(lp.getConstrs()), "LP constraints"
+		print len(lp.getConstrs()), "dual LP constraints"
 		lp.optimize()
-		print "excact dual linear programming initial state policy:", \
-				mdp.lp_state_vars[mdp.initial].x
+		print "excact dual linear programming initial state policy:"
+		for _,a,var in mdp.dual_sa_vars.select(mdp.initial):
+			if a == "STOP":
+				print "\tSTOP\t:", var.x
+			else:
+				print "\t",a.name,"\t:", var.x
 
 	if args.factored_dual:
 		lp = mdp.factored_dual_LP()
