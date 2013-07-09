@@ -141,8 +141,8 @@ class MDP:
 												lb=-float("inf"))
 		m.update()
 		# since we only care about reachable states, this suffices:
-#		m.setObjective(self.lp_state_vars[self.initial])
-		m.setObjective(G.quicksum(m.getVars()))
+		m.setObjective(self.lp_state_vars[self.initial])
+#		m.setObjective(G.quicksum(m.getVars()))
 
 		# can always cash out
 		for s,v in self.lp_state_vars.items():
@@ -199,6 +199,18 @@ class MDP:
 		return m
 
 	def exact_dual_LP(self):
+		m = G.Model() # Throws a NameError if gurobipy isn't installed
+		states = self.reachable_states()
+		self.lp_state_vars = {}
+
+		for a,s in product(self.actions, states):
+			n = a.name + "_" + self.state_name(s)
+			self.lp_state_vars[(a,s)] = m.addVar(name=n, lb=0, ub=1)
+		m.update()
+
+		m.setObjective()
+
+
 		raise NotImplementedError("TODO")
 
 	def factored_dual_LP(self, basis):
@@ -395,7 +407,7 @@ class Action:
 		return any(o.changes(state, variable_index) for o in self.outcomes)
 
 	def __repr__(self):
-		return "MDP action:", self.name
+		return "MDP action: " + self.name
 
 
 def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
