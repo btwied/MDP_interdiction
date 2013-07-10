@@ -120,13 +120,13 @@ class MDP:
 
 	def exact_primal_LP(self):
 		"""
-		Construct an exponentially large LP to solve the MDP with gurobi.
+		Construct an exponentially large LP to solve the MDP with Gurobi.
 
 		This LP follows the standard construction given, for example, on
 		p.25 of 'Competitive Markov Decision Processes' by Filar & Vrieze.
 
-		The solution to this LP is the average value over all states. The
-		the value an individual state can be extracted from the var.x of
+		The solution to this LP is the value of the initial state. The
+		the value any other state can be extracted from the var.x of
 		the state's lp variable. A list of these lp variables can be
 		retreived using lp.getVars().
 		"""
@@ -198,6 +198,17 @@ class MDP:
 		return lp
 
 	def exact_dual_LP(self):
+		"""
+		Construct an exponentially large LP to solve the MDP with Gurobi.
+
+		This LP follows the standard construction given, for example, on
+		p.25 of 'Competitive Markov Decision Processes' by Filar & Vrieze.
+
+		The solution to this LP is the value of the initial state. After
+		optimize() has been called, the variables of the LP indicate the
+		optimal policy as follows: if the variable v has v.name=s_a, then
+		action a is optimal in state s iff v.x > 0.
+		"""
 		lp = G.Model() # Throws a NameError if gurobipy wasn't loaded
 		states = self.reachable_states()
 		self.dual_sa_vars = G.tuplelist()
@@ -239,6 +250,12 @@ class MDP:
 		return lp
 
 	def factored_dual_LP(self, basis):
+		"""
+		Construct a factored LP to approximately solve the MDP with gurobi.
+
+		This LP is the dual to construction given by Guestrin, et al. in
+		'Efficient Solution Algorithms for Factored MDPs', JAIR 2003.
+		"""
 		raise NotImplementedError("TODO")
 
 	def default_basis(self):
@@ -510,22 +527,28 @@ def parse_args():
 						"policy via factored-MDP dual linear programming.")
 	parser.add_argument("--policy_iter", action="store_true", help="Set"+\
 						"this to solve the MDP via policy iteration.")
+	parser.add_argument("-num_vars", type=int, default=0, help="Number" +\
+						"of literals in the random MDP. If not set, the" +\
+						"size is set so that chosen solution algorithms "+\
+						"will take a reasonable amount of time.")
 	return parser.parse_args()
 
 
 def main(args):
-	if args.policy_iter:
-		mdp = random_MDP(min_vars=8, max_vars=8, min_acts=8, max_acts=8, \
-					min_outs=16, max_outs=16)
+	if args.num_vars > 0:
+		num_vars = args.num_vars
+	elif args.policy_iter:
+		num_vars = 8
 	elif args.exact_primal or args.exact_dual:
-		mdp = random_MDP(min_vars=16, max_vars=16, min_acts=16, \
-					max_acts=16, min_outs=32, max_outs=32)
+		num_vars = 16
 	else:
-		mdp = random_MDP(min_vars=32, max_vars=32, min_acts=32, \
-					max_acts=32, min_outs=64, max_outs=64)
+		num_vars = 32
+	mdp = random_MDP(min_vars=num_vars, max_vars=num_vars, min_acts= \
+			num_vars, max_acts=num_vars, min_outs=2*num_vars, max_outs= \
+			2*num_vars)
 	
 	print mdp
-	print "2^" + str(len(mdp.variables)), "=",  2**len(mdp.variables), \
+	print "2^" + str(num_vars), "=",  2**num_vars, \
 			"total states"
 	if args.policy_iter or args.exact_primal or args.exact_dual:
 		print len(mdp.reachable_states()), "reachable states"
@@ -550,14 +573,16 @@ def main(args):
 
 	if args.exact_dual:
 		lp = mdp.exact_dual_LP()
-		print len(lp.getConstrs()), "dual LP constraints"
 		lp.optimize()
-		print "excact dual linear programming initial state policy:"
-		for _,a,var in mdp.dual_sa_vars.select(mdp.initial):
-			if a == "STOP":
-				print "\tSTOP\t:", var.x
-			else:
-				print "\t",a.name,"\t:", var.x
+		print "excact dual linear programming initial state value:", \
+				lp.objVal
+		try:
+			print "excact dual linear programming initial state policy: "+\
+					str(filter(lambda sav: sav[2].x > 0, \
+					mdp.dual_sa_vars.select(mdp.initial))[0][1].name)
+		except AttributeError:
+			print "excact dual linear programming initial state policy: "+\
+					"STOP"
 
 	if args.factored_dual:
 		lp = mdp.factored_dual_LP()
