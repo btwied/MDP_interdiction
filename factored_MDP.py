@@ -169,19 +169,9 @@ class MDP:
 		This LP follows the construction given by Guestrin, et al. in
 		'Efficient Solution Algorithms for Factored MDPs', JAIR 2003.
 
-		basis: a collection of PartialStates each specifying two tuples
-				of variables. The first tuple specifies positive literals
-				and the second specifies negative literals; when all these
-				literals have their specified values f=1. As an example, if
-				((v2,v4),(v5)) is in the 'basis' collection, then the
-				following is a basis function:
-						{ 1 if x=..1.10.*
-				f(x) =	{ 0 if x=..0....*
-						{	or x=....0..*
-						{	or x=.....1.*
-				The constant function f(x)=1 will be added to the basis
-				automatically to ensure LP feasibility. Using default_basis
-				is probably a good place to start.
+		The constant function f(x)=1 will be added to the basis
+		automatically to ensure LP feasibility. Using default_basis
+		is probably a good place to start.
 		"""
 		lp = G.Model() # Throws a NameError if gurobipy wasn't loaded
 		self.basis = sorted(set(basis).union({PartialState((),())}))
@@ -190,8 +180,11 @@ class MDP:
 		for b in self.basis:
 			self.lp_basis_vars[b] = lp.addVar(name=str(b), lb=-float("inf"))
 		lp.update()
-		# This should be based on state relevance weights:
-		lp.setObjective(G.quicksum(lp.getVars()))
+
+		# set objective
+		lp.setObjective()
+
+		# set constraints
 		
 		#TODO: finish implementing this!
 		raise NotImplementedError("TODO")
@@ -423,6 +416,22 @@ class Prereq(PartialState):
 		return True
 
 
+class Basis(Prereq):
+	"""
+	A specification of a basis function for linear value approximation.
+
+	Basis inherits from Prereq so that it can use consistent(), not because
+	of any conceptual dependence. When a state is consistent with the
+	basis, the basis function has value 1. For example, if pos=(v2,v4) and 
+	neg=(v5,), then the function is as follows:
+			{ 1 if s=..1.10.*
+	f(s) =	{ 0 if s=..0....*
+			{	or s=....0..*
+			{	or s=.....1.*
+	"""
+	def backproject(self, action, variable_index):
+		raise NotImplementedError("TODO")
+
 class Action:
 	"""
 	MDP action.
@@ -546,15 +555,15 @@ def main(args):
 	mdp = random_MDP(min_vars=num_vars, max_vars=num_vars, min_acts= \
 			num_vars, max_acts=num_vars, min_outs=2*num_vars, max_outs= \
 			2*num_vars)
+
+	if args.prm != "":
+		G.readParams(args.prm)
 	
 	print mdp
 	print "2^" + str(num_vars), "=",  2**num_vars, \
 			"total states"
 	if args.policy_iter or args.exact_primal or args.exact_dual:
 		print len(mdp.reachable_states()), "reachable states"
-
-	if args.prm != "":
-		G.readParams(args.prm)
 
 	if args.exact_primal:
 		lp = mdp.exact_primal_LP()
