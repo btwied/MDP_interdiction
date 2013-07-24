@@ -613,12 +613,15 @@ def main(args):
 		print "factored primal linear programming approximate initial "+\
 				"state value:", mdp.lp_basis_vars[mdp.initial].x
 
-
 	if args.policy_iter:
 		policy, values = mdp.policy_iteration()
-		print "policy iteration MDP value:", values[mdp.initial]
-		unique_values = unique_floats(values.values())
-		print len(unique_values), "unique state-values, according to PI"
+		print "policy iteration initial state value:", values[mdp.initial]
+		try:
+			print "policy iteration initial state policy: " + \
+					str(policy[mdp.initial].name)
+		except AttributeError:
+			print "policy iteration initial state policy: STOP"
+
 
 def unique_floats(collection, tolerance=1e-6):
 	unique = []
