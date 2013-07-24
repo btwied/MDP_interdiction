@@ -1,12 +1,13 @@
 #!/usr/bin/python
 
+from argparse import ArgumentParser
 from random import randrange, sample
-from itertools import product
+from itertools import product, chain, combinations
 
 from numpy.random import uniform
 from numpy import zeros, array
 
-from argparse import ArgumentParser
+from CachedAttr import LazyCollection
 
 # import Gurobi but don't crash if it wasn't loaded
 import warnings
@@ -54,10 +55,9 @@ class MDP:
 				upon termination.
 		true_rwds: same, but v=False
 		"""
-		self.variables = sorted(set(variables))
-		self.variable_index = {v:i for i,v in enumerate(self.variables)}
+		self.variables = LazyCollection(variables, sort=True)
 		init_state = zeros(len(self.variables), dtype=bool)
-		init_state[[self.variable_index[v] for v in initial]] = True
+		init_state[[self.variables.index(v) for v in initial]] = True
 		self.initial = tuple(init_state)
 		self.actions = actions
 		self.true_rewards = array([true_rwds[v] if v in true_rwds else 0 \
@@ -107,10 +107,10 @@ class MDP:
 			state = unvisited.pop()
 			visited.add(state)
 			for action in self.actions:
-				if action.prereq.consistent(state, self.variable_index):
+				if action.prereq.consistent(state, self.variables):
 					for outcome in action.outcomes:
 						next_state = outcome.transition(state, \
-										self.variable_index)
+										self.variables)
 						parents = self.reachable.get(next_state,set())
 						parents.add((state,action))
 						self.reachable[next_state] = parents
@@ -149,14 +149,14 @@ class MDP:
 
 		# backpropagation
 		for state,action in product(states, self.actions):
-			if action.prereq.consistent(state, self.variable_index) and \
-					action.can_change(state, self.variable_index):
+			if action.prereq.consistent(state, self.variables) and \
+					action.can_change(state, self.variables):
 				const = action.stop_prob * self.terminal_reward(state)
 				const -= action.cost
 				expr = G.LinExpr(float(const))
 				for outcome,prob in action.outcome_probs.items():
 					lp_var = self.primal_state_vars[outcome.transition( \
-									state, self.variable_index)]
+									state, self.variables)]
 					expr += prob * lp_var
 				lp.addConstr(self.primal_state_vars[state] >= expr)
 		lp.update()
@@ -211,7 +211,7 @@ class MDP:
 			self.dual_sa_vars.append((s, "STOP", lp.addVar(name=n+"_STOP", \
 					lb=0)))
 			for a in self.actions:
-				if a.prereq.consistent(s, self.variable_index):
+				if a.prereq.consistent(s, self.variables):
 
 					self.dual_sa_vars.append((s, a, lp.addVar(name=n+"_"+\
 							a.name, lb=0)))
@@ -232,7 +232,7 @@ class MDP:
 			constr = G.quicksum([v for _,a,v in \
 						self.dual_sa_vars.select(s)])
 			for parent,action in self.reachable[s]:
-				prob = action.trans_prob(parent, s, self.variable_index)
+				prob = action.trans_prob(parent, s, self.variables)
 				var = self.dual_sa_vars.select(parent,action)[0][2]
 				constr -= prob * var
 			if s == self.initial:
@@ -276,7 +276,7 @@ class MDP:
 		"""
 		value = -action.cost
 		for outcome,prob in action.outcome_probs.items():
-			next_state = outcome.transition(state, self.variable_index)
+			next_state = outcome.transition(state, self.variables)
 			value += prob * values[next_state]
 		value += action.stop_prob * self.terminal_reward(state)
 		return value
@@ -314,7 +314,7 @@ class MDP:
 			best_action = None
 			best_value = self.terminal_reward(state)
 			for action in self.actions:
-				if action.prereq.consistent(state, self.variable_index):
+				if action.prereq.consistent(state, self.variables):
 					act_val = self.action_value(state, action, values) 
 					if act_val > best_value:
 						best_value = act_val
@@ -351,11 +351,15 @@ def converged(old_vals, new_vals, thresh=1e-6):
 	return all((abs(new_vals[s] - old_vals[s]) < thresh for s in new_vals))
 
 
+def powerset(s):
+	return chain.from_iterable(combinations(s,i) for i in range(len(s)+1))
+
+
 class PartialState:
 	"""Parent class for Outcome and Prereq."""
 	def __init__(self, pos, neg):
-		self.pos = pos
-		self.neg = neg
+		self.pos = set(pos)
+		self.neg = set(neg)
 		self.tup = (tuple(self.pos), tuple(self.neg))
 
 	def __hash__(self):
@@ -370,7 +374,7 @@ class PartialState:
 	def __repr__(self):
 		try:
 			return self._str
-		except NameError:
+		except AttributeError:
 			self._str = "+" + "".join(map(str, self.pos)) + \
 						"_-" + "".join(map(str, self.neg))
 			return self._str
@@ -383,24 +387,28 @@ class Outcome(PartialState):
 	Performing an action will result in some associated outcome's transition
 	being applied to the state.
 	"""
-	def transition(self, state, variable_index):
+	def transition(self, state, variables):
 		"""
 		Add the positive literals to the state and remove the negative ones.
 		"""
 		next_state = array(state)
-		next_state[[variable_index[v] for v in self.pos]] = True
-		next_state[[variable_index[v] for v in self.neg]] = False
+		next_state[[variables.index(v) for v in self.pos]] = True
+		next_state[[variables.index(v) for v in self.neg]] = False
 		return tuple(next_state)
 
-	def changes(self, state, variable_index):
-		return self.transition(state, variable_index) != state
+	def changes(self, state, variables):
+		return self.transition(state, variables) != state
 
 
 class Prereq(PartialState):
 	"""
 	Specifies prerequisites that must hold for an action to be available.
 	"""
-	def consistent(self, state, variable_index):
+	def __init__(self, *args):
+		PartialState.__init__(self, *args)
+		self.domain = list(self.pos) + list(self.neg)
+
+	def consistent(self, state, variables):
 		"""
 		Tests whether a state is consistend with the prerequisite.
 
@@ -408,10 +416,10 @@ class Prereq(PartialState):
 		and all the negatives are false.
 		"""
 		for v in self.pos:
-			if not state[variable_index[v]]:
+			if not state[variables.index(v)]:
 				return False
 		for v in self.neg:
-			if state[variable_index[v]]:
+			if state[variables.index(v)]:
 				return False
 		return True
 
@@ -429,8 +437,7 @@ class Basis(Prereq):
 			{	or s=....0..*
 			{	or s=.....1.*
 	"""
-	def backproject(self, action, variable_index):
-		raise NotImplementedError("TODO")
+
 
 class Action:
 	"""
@@ -454,15 +461,22 @@ class Action:
 		self.outcomes = sorted(outcome_dist.keys())
 		self.stop_prob = 1. - sum(outcome_dist.values())
 	
-	def trans_prob(self, pre_state, post_state, variable_index):
+	def trans_prob(self, pre_state, post_state, variables):
 		prob = 0
 		for o,p in self.outcome_probs.items():
-			if o.transition(pre_state, variable_index) == post_state:
+			if o.transition(pre_state, variables) == post_state:
 				prob += p
 		return prob
 
-	def can_change(self, state, variable_index):
-		return any(o.changes(state, variable_index) for o in self.outcomes)
+	def can_change(self, state, variables):
+		return any(o.changes(state, variables) for o in self.outcomes)
+
+	def parents(self, variable, truth_val):
+		for o in self.outcomes:
+			if variable in (o.pos if truth_val else o.neg):
+				return self.prereq.domain
+		return []
+
 
 	def __repr__(self):
 		return "MDP action: " + self.name
