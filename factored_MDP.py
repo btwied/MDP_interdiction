@@ -7,7 +7,7 @@ from itertools import product, chain, combinations
 from numpy.random import uniform
 from numpy import zeros, array
 
-from CachedAttr import LazyCollection
+from CachedAttr import LazyCollection, CachedAttr
 
 # import Gurobi but don't crash if it wasn't loaded
 import warnings
@@ -355,29 +355,21 @@ def powerset(s):
 	return chain.from_iterable(combinations(s,i) for i in range(len(s)+1))
 
 
-class PartialState:
+class PartialState(LazyCollection):
 	"""Parent class for Outcome and Prereq."""
 	def __init__(self, pos, neg):
-		self.pos = set(pos)
-		self.neg = set(neg)
-		self.tup = (tuple(self.pos), tuple(self.neg))
+		self.pos = LazyCollection(pos)
+		self.neg = LazyCollection(neg)
+		self.data = (self.pos, self.neg)
 
-	def __hash__(self):
-		return hash(self.tup)
-	
+	@CachedAttr
+	def as_str(self):
+		return "+" + repr(self.pos) + "_-" + repr(self.neg)
+
 	def __cmp__(self, other):
-		try:
-			return cmp(self.tup, other.tup)
-		except AttributeError:
-			return cmp(self.tup, other)
-
-	def __repr__(self):
-		try:
-			return self._str
-		except AttributeError:
-			self._str = "+" + "".join(map(str, self.pos)) + \
-						"_-" + "".join(map(str, self.neg))
-			return self._str
+		if isinstance(other, PartialState):
+			return cmp(self.pos, other.pos) or cmp(self.neg, other.neg)
+		return LazyCollection.__cmp__(self, other)
 
 
 class Outcome(PartialState):
@@ -406,7 +398,6 @@ class Prereq(PartialState):
 	"""
 	def __init__(self, *args):
 		PartialState.__init__(self, *args)
-		self.domain = list(self.pos) + list(self.neg)
 
 	def consistent(self, state, variables):
 		"""
@@ -470,13 +461,6 @@ class Action:
 
 	def can_change(self, state, variables):
 		return any(o.changes(state, variables) for o in self.outcomes)
-
-	def parents(self, variable, truth_val):
-		for o in self.outcomes:
-			if variable in (o.pos if truth_val else o.neg):
-				return self.prereq.domain
-		return []
-
 
 	def __repr__(self):
 		return "MDP action: " + self.name
@@ -585,8 +569,6 @@ def main(args):
 		lp.optimize()
 		print "excact primal linear programming initial state value:", \
 				mdp.primal_state_vars[mdp.initial].x
-#		unique_values = unique_floats(var.x for var in lp.getVars())
-#		print len(unique_values), "unique state-values, according to LP"
 
 	if args.factored_primal:
 		lp = mdp.factored_primalLP()
@@ -622,13 +604,6 @@ def main(args):
 		except AttributeError:
 			print "policy iteration initial state policy: STOP"
 
-
-def unique_floats(collection, tolerance=1e-6):
-	unique = []
-	for flt in set(collection):
-		if all(abs(flt-u) > tolerance for u in unique):
-			unique.append(flt)
-	return unique
 
 if __name__ == "__main__":
 	args = parse_args()
