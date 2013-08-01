@@ -3,6 +3,7 @@
 from argparse import ArgumentParser
 from random import randrange, sample
 from itertools import product, chain, combinations
+from collections import defaultdict
 
 from numpy.random import uniform
 from numpy import zeros, array
@@ -357,14 +358,14 @@ def powerset(s):
 
 class PartialState(LazyCollection):
 	"""Parent class for Outcome and Prereq."""
-	def __init__(self, pos, neg):
-		self.pos = LazyCollection(pos)
-		self.neg = LazyCollection(neg)
+	def __init__(self, pos, neg, sort=False):
+		self.pos = LazyCollection(pos, sort)
+		self.neg = LazyCollection(neg, sort)
 		self.data = (self.pos, self.neg)
 
 	@CachedAttr
 	def as_str(self):
-		return "+" + repr(self.pos) + "_-" + repr(self.neg)
+		return "+" + repr(self.pos) + "-" + repr(self.neg)
 
 	def __cmp__(self, other):
 		if isinstance(other, PartialState):
@@ -391,14 +392,19 @@ class Outcome(PartialState):
 	def changes(self, state, variables):
 		return self.transition(state, variables) != state
 
+	def partial_transition(self, partial_state):
+		"""
+		Same as transition(), but operates on PartialState objects.
+		"""
+		pos = partial_state.pos.union(self.pos).difference(self.neg)
+		neg = partial_state.neg.union(self.neg).difference(self.pos)
+		return PartialState(pos, neg, True)
+
 
 class Prereq(PartialState):
 	"""
 	Specifies prerequisites that must hold for an action to be available.
 	"""
-	def __init__(self, *args):
-		PartialState.__init__(self, *args)
-
 	def consistent(self, state, variables):
 		"""
 		Tests whether a state is consistend with the prerequisite.
@@ -415,19 +421,58 @@ class Prereq(PartialState):
 		return True
 
 
-class Basis(Prereq):
+class Basis(PartialState):
 	"""
 	A specification of a basis function for linear value approximation.
 
-	Basis inherits from Prereq so that it can use consistent(), not because
-	of any conceptual dependence. When a state is consistent with the
-	basis, the basis function has value 1. For example, if pos=(v2,v4) and 
-	neg=(v5,), then the function is as follows:
+	When a state is consistent with the basis, the basis function has value
+	1. For example, if pos=(v2,v4) and neg=(v5,), then the function is as
+	follows:
 			{ 1 if s=..1.10.*
 	f(s) =	{ 0 if s=..0....*
 			{	or s=....0..*
 			{	or s=.....1.*
 	"""
+	def triggered_by(self, partial_state):
+		return self.pos.issubset(partial_state.pos) and \
+				self.neg.issubset(partial_state.neg)
+
+	def backprojection(self, action):
+		"""
+		Construct g_i^a function.
+
+		Returns a dict mapping partial states, z, in the function's domain
+		to g_i^a(z) values.
+		"""
+		must_start_pos = set(action.prereq.pos)
+		must_start_neg = set(action.prereq.neg)
+		must_end_pos = set(self.pos)
+		must_end_neg = set(self.neg)
+
+		must_start_pos.update(must_end_pos - action.can_make_pos)
+		must_start_neg.update(must_end_neg - action.can_make_neg)
+		must_end_pos.update(must_start_pos - action.can_make_neg)
+		must_end_neg.update(must_start_neg - action.can_make_pos)
+		must_end_pos.update(action.must_make_pos)
+		must_end_neg.update(action.must_make_neg)
+
+		g = defaultdict(lambda: 0)
+		if not (must_start_pos.isdisjoint(must_start_neg) and \
+				must_end_pos.isdisjoint(must_end_neg)):
+			return g
+
+		fixed_at_start = must_start_pos.union(must_start_neg)
+		fixed_at_end = must_end_pos.union(must_end_neg)
+		free_at_start = fixed_at_end - fixed_at_start
+		can_start_neg = must_start_neg.union(free_at_start)
+
+		for true_vars in powerset(free_at_start):
+			z = PartialState(must_start_pos.union(true_vars), \
+							can_start_neg.difference(true_vars), True)
+			for outcome in action.outcomes:
+				if self.triggered_by(outcome.partial_transition(z)):
+					g[z] += action.outcome_probs[outcome]
+		return g
 
 
 class Action:
@@ -449,9 +494,65 @@ class Action:
 		self.cost = cost
 		self.prereq = prereq
 		self.outcome_probs = outcome_dist
-		self.outcomes = sorted(outcome_dist.keys())
-		self.stop_prob = 1. - sum(outcome_dist.values())
-	
+
+	@CachedAttr
+	def stop_prob(self):
+		return 1. - sum(self.outcome_probs.values())
+
+	@CachedAttr
+	def outcomes(self):
+		return sorted(self.outcome_probs.keys())
+
+	@CachedAttr
+	def can_make_pos(self):
+		"""Set of variables that can be added."""
+		pos_vars = set()
+		for o in self.outcomes:
+			pos_vars.update(o.pos)
+		return pos_vars
+
+	@CachedAttr
+	def can_make_neg(self):
+		"""Set of variables that can be deleted."""
+		neg_vars = set()
+		for o in self.outcomes:
+			neg_vars.update(o.neg)
+		return neg_vars
+
+	@CachedAttr
+	def must_make_pos(self):
+		"""Set of variables that always end up positive."""
+		pos_vars = set(self.outcomes[0].pos)
+		for o in self.outcomes:
+			pos_vars.intersection_update(o.pos)
+		return pos_vars
+
+	@CachedAttr
+	def must_make_neg(self):
+		"""Set of variables that always end up negative."""
+		neg_vars = set(self.outcomes[0].neg)
+		for o in self.outcomes:
+			neg_vars.intersection_update(o.neg)
+		return neg_vars
+
+	@CachedAttr
+	def add_prob(self):
+		"""Dict of probabilities that each variable will be added."""
+		add_probs = defaultdict(lambda: 0)
+		for o in self.outcomes:
+			for v in o.pos:
+				add_probs[v] += self.outcome_probs[o]
+		return pos_probs
+
+	@CachedAttr
+	def del_prob(self):
+		"""Dict of probabilities that each variable will be deleted."""
+		del_probs = defaultdict(lambda: 0)
+		for o in self.outcomes:
+			for v in o.neg:
+				del_probs[v] += self.outcome_probs[o]
+		return del_probs
+
 	def trans_prob(self, pre_state, post_state, variables):
 		prob = 0
 		for o,p in self.outcome_probs.items():
@@ -463,7 +564,8 @@ class Action:
 		return any(o.changes(state, variables) for o in self.outcomes)
 
 	def __repr__(self):
-		return "MDP action: " + self.name
+		return "MDP action: name=" + self.name + ", prereq=" + \
+				repr(self.prereq) + ", outcomes=" + repr(self.outcomes)
 
 	def __hash__(self):
 		return hash(self.name)

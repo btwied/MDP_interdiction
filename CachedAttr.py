@@ -24,14 +24,15 @@ class LazyCollection:
 	"""
 	Collection that can act like a tuple or set as needed.
 
-	The input collection becomes self.data. If containment testing is
-	performed, a set representation is constructed. If hashing or indexing
-	is performed a tuple representation is constructed. If str or repr is
-	called, a string representation is constructed. If an index is requested
-	a reverse-index dict is constructed.
+	The input collection becomes self.data. If containment testing (or
+	another set operation) is performed, a set representation is
+	constructed. If hashing or indexing is performed a tuple representation
+	is constructed. If str or repr is called, a string representation is
+	constructed. If the index of an item is requested a reverse-index dict
+	is constructed.
 
 	This collection is not intended to be mutable: the whole point is to
-	cache the various representations to speed up repeated operations. 
+	cache the various representations to speed up repeated operations.
 	Therefore no set or update methods have been provided.
 
 	LazyCollection was designed under the assumption that elements would be
@@ -96,4 +97,32 @@ class LazyCollection:
 		if isinstance(other, str):
 			return cmp(self.as_str, other)
 		return cmp(self.data, other)
+
+	def pass_to_set(self, other, method_name):
+		method = getattr(self.as_set, method_name)
+		if isinstance(other, LazyCollection):
+			res = method(other.as_set)
+		else:
+			res = method(other)
+		if isinstance(res, set):
+			return LazyCollection(res)
+		return res
+
+	def isdisjoint(self, other):
+		return self.pass_to_set(other, "isdisjoint")
+
+	def issubset(self, other):
+		return self.pass_to_set(other, "issubset")
+
+	def issuperset(self, other):
+		return self.pass_to_set(other, "issuperset")
+
+	def intersection(self, other):
+		return self.pass_to_set(other, "intersection")
+
+	def union(self, other):
+		return self.pass_to_set(other, "union")
+
+	def difference(self, other):
+		return self.pass_to_set(other, "difference")
 
