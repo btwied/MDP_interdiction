@@ -1,2 +1,6 @@
-problems/
+planning/
+writeup/
 *.log
+*.pyc
+*.swp
+.DS_Store
