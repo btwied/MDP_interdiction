@@ -78,6 +78,15 @@ class Action:
 				del_probs[v] += self.outcome_probs[o]
 		return del_probs
 
+
+	@CachedAttr
+	def as_str(self):
+		s = "MDP action: name=" + self.name + ", prereq=" + \
+			repr(self.prereq) + ", outcomes="
+		s += "[" + ", ".join([str(round(p, 3)) + str(o) for o,p in \
+				self.outcome_probs.items()]) + "]"
+		return s
+
 	def trans_prob(self, pre_state, post_state, variables):
 		prob = 0
 		for o,p in self.outcome_probs.items():
@@ -89,8 +98,7 @@ class Action:
 		return any(o.changes(state, variables) for o in self.outcomes)
 
 	def __repr__(self):
-		return "MDP action: name=" + self.name + ", prereq=" + \
-				repr(self.prereq) + ", outcomes=" + repr(self.outcomes)
+		return self.as_str
 
 	def __hash__(self):
 		return hash(self.name)
