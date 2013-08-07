@@ -3,9 +3,8 @@
 from argparse import ArgumentParser
 
 from factored_MDP import random_MDP
-from exact_DP import *
-from exact_LPs import *
-from factored_LPs import *
+from exact_solvers import *
+from factored_solvers import *
 
 
 def parse_args():
