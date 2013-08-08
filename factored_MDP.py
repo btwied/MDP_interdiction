@@ -3,11 +3,10 @@ from itertools import product
 from collections import defaultdict
 
 from numpy.random import uniform
-from numpy import zeros, array
 
 from CachedAttr import CachedAttr
 from LazyCollection import LazyCollection
-from MDP_State import Basis, Outcome, Prereq
+from MDP_State import Basis, Outcome, Prereq, State
 from MDP_Action import Action
 
 
@@ -48,14 +47,12 @@ class MDP:
 		true_rwds: same, but v=False
 		"""
 		self.variables = LazyCollection(variables, sort=True)
-		init_state = zeros(len(self.variables), dtype=bool)
-		init_state[[self.variables.index(v) for v in initial]] = True
-		self.initial = tuple(init_state)
+		self.initial = State(initial, self.variables.difference(initial), \
+							sort=True)
 		self.actions = actions
-		self.true_rewards = array([true_rwds[v] if v in true_rwds else 0 \
-								for v in self.variables])
-		self.false_rewards = array([false_rwds[v] if v in false_rwds \
-								else 0 for v in self.variables])
+		self.true_rewards = true_rwds
+		self.false_rewards = false_rwds
+		self.state_rewards = {}
 
 	def __repr__(self):
 		s = "MDP: "
@@ -65,51 +62,41 @@ class MDP:
 	
 	def terminal_reward(self, state):
 		"""
-		Calculates the reward if the MDP terminates in the given state.
+		The reward if the MDP terminates in the given state.
 		"""
-		state_vect = array(state)
-		return float(self.true_rewards.dot(state_vect) + \
-						self.false_rewards.dot(1-state_vect))
+		if state in self.state_rewards:
+			return self.state_rewards[state]
+		self.state_rewards[state] = sum(self.true_rewards.get(v, 0.) \
+				for v in state.pos) + sum(self.false_rewards.get(v, 0.) \
+				for v in state.neg)
+		return self.state_rewards[state]
 
+	@CachedAttr
 	def full_states(self):
-		"""
-		Initializes and returns the (exponentially large) set of states.
-		"""
-		try:
-			return self.states
-		except AttributeError:
-			self.states = map(tuple, product([0,1], repeat= \
-										len(self.variables)))
-			return self.states
+		"""The full (exponentially large) set of states."""
+		return map(State, product([0,1], repeat=len(self.variables)))
 
+	@CachedAttr
 	def reachable_states(self):
-		"""
-		Searches for all states reachable from the initial state.
-
-		This set is likely to be exponentially large.
-		"""
-		try:
-			return self.reachable
-		except AttributeError:
-			pass
+		"""The set of states reachable from initial (probably exponential)."""
 		unvisited = {self.initial}
 		visited = set()
-		self.reachable = {self.initial:set()}
+		reachable = {self.initial:set()}
 		while unvisited:
 			state = unvisited.pop()
 			visited.add(state)
 			for action in self.actions:
-				if action.prereq.consistent(state, self.variables):
+				if action.prereq.consistent(state):
 					for outcome in action.outcomes:
-						next_state = outcome.transition(state, \
-										self.variables)
-						parents = self.reachable.get(next_state,set())
+						next_state = outcome.transition(state)
+						parents = reachable.get(next_state,set())
 						parents.add((state,action))
-						self.reachable[next_state] = parents
+						reachable[next_state] = parents
 						if next_state not in visited:
 							unvisited.add(next_state)
-		return self.reachable
-
+		return reachable
+		
+	@CachedAttr
 	def default_basis(self):
 		"""
 		Creates a basis function for each literal, prereq, and outcome.
@@ -119,14 +106,6 @@ class MDP:
 			basis.append(a.prereq)
 			basis.extend(a.outcomes)
 		return basis
-
-	def state_name(self, state_vect):
-		"""
-		Gives the name of the LP variable used to represent the state's
-		value in the exact_LPs.
-		"""
-		return "".join([var if val else "" for var, val in \
-					zip(self.variables, state_vect)])
 
 
 def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \

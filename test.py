@@ -51,7 +51,7 @@ def main(args):
 	print "2^" + str(num_vars), "=",  2**num_vars, \
 			"total states"
 	if args.policy_iter or args.exact_primal or args.exact_dual:
-		print len(mdp.reachable_states()), "reachable states"
+		print len(mdp.reachable_states), "reachable states"
 
 	if args.exact_primal:
 		lp, state_vars = exact_primal_LP(mdp)

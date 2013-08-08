@@ -69,7 +69,10 @@ class LazyCollection:
 	
 	def __cmp__(self, other):
 		if isinstance(other, LazyCollection):
-			return cmp(self.data, other.data)
+			try:
+				return cmp(self.data, other.data)
+			except TypeError:
+				return cmp(self.as_tuple, other.as_tuple)
 		if isinstance(other, tuple):
 			return cmp(self.as_tuple, other)
 		if isinstance(other, set):

@@ -90,12 +90,12 @@ class Action:
 	def trans_prob(self, pre_state, post_state, variables):
 		prob = 0
 		for o,p in self.outcome_probs.items():
-			if o.transition(pre_state, variables) == post_state:
+			if o.transition(pre_state) == post_state:
 				prob += p
 		return prob
 
 	def can_change(self, state, variables):
-		return any(o.changes(state, variables) for o in self.outcomes)
+		return any(o.changes(state) for o in self.outcomes)
 
 	def __repr__(self):
 		return self.as_str

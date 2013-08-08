@@ -25,12 +25,11 @@ def exact_primal_LP(mdp):
 	retreived using lp.getVars().
 	"""
 	lp = G.Model() # Throws a NameError if gurobipy wasn't loaded
-	states = mdp.reachable_states()
 	state_vars = {}
 
 	# add a variable to the LP to represent the value of each state
-	for s in states:
-		state_vars[s] = lp.addVar(name=mdp.state_name(s), lb=-float("inf"))
+	for s in mdp.reachable_states:
+		state_vars[s] = lp.addVar(name=str(s), lb=-float("inf"))
 	lp.update()
 	# objective is the value of the initial state
 	lp.setObjective(state_vars[mdp.initial])
@@ -40,15 +39,14 @@ def exact_primal_LP(mdp):
 		lp.addConstr(v >= mdp.terminal_reward(s))
 
 	# backpropagation
-	for state,action in product(states, mdp.actions):
-		if action.prereq.consistent(state, mdp.variables) and \
+	for state,action in product(mdp.reachable_states, mdp.actions):
+		if action.prereq.consistent(state) and \
 				action.can_change(state, mdp.variables):
 			const = action.stop_prob * mdp.terminal_reward(state)
 			const -= action.cost
 			expr = G.LinExpr(float(const))
-			for outcome,prob in action.outcome_probs.items():
-				lp_var = state_vars[outcome.transition(state, \
-									mdp.variables)]
+			for out,prob in action.outcome_probs.items():
+				lp_var = state_vars[out.transition(state)]
 				expr += prob * lp_var
 			lp.addConstr(state_vars[state] >= expr)
 	lp.update()
@@ -69,15 +67,13 @@ def exact_dual_LP(mdp):
 	action a is optimal in state s iff v.x > 0.
 	"""
 	lp = G.Model() # Throws a NameError if gurobipy wasn't loaded
-	states = mdp.reachable_states()
 	sa_vars = G.tuplelist()
 
-	for s in states:
-		n = mdp.state_name(s)
-		sa_vars.append((s, "STOP", lp.addVar(name=n+"_STOP", lb=0)))
+	for s in mdp.reachable_states:
+		sa_vars.append((s, "STOP", lp.addVar(name=str(s)+"_STOP", lb=0)))
 		for a in mdp.actions:
-			if a.prereq.consistent(s, mdp.variables):
-				sa_vars.append((s, a, lp.addVar(name=n +"_"+ a.name, lb=0)))
+			if a.prereq.consistent(s):
+				sa_vars.append((s, a, lp.addVar(name=str(s)+"_"+a.name, lb=0)))
 	lp.update()
 
 	# set objective
@@ -91,9 +87,9 @@ def exact_dual_LP(mdp):
 	lp.setObjective(obj, G.GRB.MAXIMIZE)
 
 	# set constraints
-	for s in states:
+	for s in mdp.reachable_states:
 		constr = G.quicksum([v for _,a,v in sa_vars.select(s)])
-		for parent,action in mdp.reachable[s]:
+		for parent,action in mdp.reachable_states[s]:
 			prob = action.trans_prob(parent, s, mdp.variables)
 			var = sa_vars.select(parent,action)[0][2]
 			constr -= prob * var
@@ -112,7 +108,7 @@ def action_value(mdp, state, action, values):
 	"""
 	value = -action.cost
 	for outcome,prob in action.outcome_probs.items():
-		next_state = outcome.transition(state, mdp.variables)
+		next_state = outcome.transition(state)
 		value += prob * values[next_state]
 	value += action.stop_prob * mdp.terminal_reward(state)
 	return value
@@ -126,10 +122,9 @@ def state_values(mdp, policy, values, iters=1000, cnvrg_thresh=1e-6):
 	a large number of iterations. For modified policy iteration, iters
 	can be set relatively low to return before convergence.
 	"""
-	states = mdp.reachable_states()
 	for _i in range(iters):
 		new_values = {}
-		for state in states:
+		for state in mdp.reachable_states:
 			action = policy[state]
 			if action == None:
 				new_values[state] = mdp.terminal_reward(state)
@@ -145,13 +140,12 @@ def greedy_policy(mdp, values):
 	"""
 	State-action map that is one-step optimal according to values.
 	"""
-	states = mdp.reachable_states()
 	new_policy = {}
-	for state in states:
+	for state in mdp.reachable_states:
 		best_action = None
 		best_value = mdp.terminal_reward(state)
 		for action in mdp.actions:
-			if action.prereq.consistent(state, mdp.variables):
+			if action.prereq.consistent(state):
 				act_val = action_value(mdp, state, action, values) 
 				if act_val > best_value:
 					best_value = act_val
@@ -173,13 +167,11 @@ def policy_iteration(mdp, policy_iters=1000, value_iters=100, \
 	should be set very high; for modified policy iteration, it can be
 	relativley small.
 	"""
-	states = mdp.reachable_states()
-	values = {s:0 for s in states}
+	values = {s:0 for s in mdp.reachable_states}
 	for _i in range(policy_iters):
 		old_values = values
 		policy = greedy_policy(mdp, values)
-		values = state_values(mdp, policy, values, value_iters, \
-									cnvrg_thresh)
+		values = state_values(mdp, policy, values, value_iters, cnvrg_thresh)
 		if converged(old_values, values, cnvrg_thresh):
 			values_changed = False
 	return policy, values
