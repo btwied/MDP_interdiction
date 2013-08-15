@@ -103,9 +103,24 @@ class LazyCollection:
 	def intersection(self, other):
 		return self.pass_to_set(other, "intersection")
 
+	def __and__(self, other):
+		return self.intersection(other)
+
 	def union(self, other):
 		return self.pass_to_set(other, "union")
 
+	def __or__(self, other):
+		return self.union(other)
+
 	def difference(self, other):
 		return self.pass_to_set(other, "difference")
+
+	def __sub__(self, other):
+		return self.difference(other)
+
+	def symmetric_difference(self, other):
+		return self.pass_to_set(other, "symmetric_difference")
+
+	def __xor__(self, other):
+		return self.symmetric_difference(other)
 

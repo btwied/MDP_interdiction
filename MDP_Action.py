@@ -78,7 +78,6 @@ class Action:
 				del_probs[v] += self.outcome_probs[o]
 		return del_probs
 
-
 	@CachedAttr
 	def as_str(self):
 		s = "MDP action: name=" + self.name + ", prereq=" + \

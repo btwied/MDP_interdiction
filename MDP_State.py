@@ -1,5 +1,3 @@
-from collections import defaultdict
-
 from numpy import array
 
 from CachedAttr import CachedAttr
@@ -9,7 +7,7 @@ from useful_functions import powerset
 
 
 class State(LazyCollection):
-	"""Parent class for Outcome and Prereq."""
+	"""Parent class for Outcome, Prereq, and Basis."""
 	def __init__(self, pos, neg, sort=False):
 		"""
 		pos: variables that are true/positive
@@ -26,6 +24,15 @@ class State(LazyCollection):
 	@CachedAttr
 	def as_str(self):
 		return "+" + repr(self.pos) + "-" + repr(self.neg)
+
+	def __contains__(self, item):
+		return item in self.pos or item in self.neg
+	
+	def __iter__(self):
+		for v in self.pos:
+			yield v
+		for v in self.neg:
+			yield v
 
 	def __cmp__(self, other):
 		if isinstance(other, State):
@@ -94,6 +101,7 @@ class Basis(State):
 
 		return:	A dict mapping states, z, in the function's domain
 				to g_i^a(z) values.
+		return: A set of variables appearing in domain states.
 		"""
 		must_start_pos = set(action.prereq.pos)
 		must_start_neg = set(action.prereq.neg)
@@ -107,10 +115,11 @@ class Basis(State):
 		must_end_pos.update(action.must_make_pos)
 		must_end_neg.update(action.must_make_neg)
 
-		g = defaultdict(lambda: 0)
+		g = {}
 		if not (must_start_pos.isdisjoint(must_start_neg) and \
 				must_end_pos.isdisjoint(must_end_neg)):
-			return g
+			# Inconsistent; empty function and domain
+			return g, LazyCollection([])
 
 		fixed_at_start = must_start_pos.union(must_start_neg)
 		fixed_at_end = must_end_pos.union(must_end_neg)
@@ -123,5 +132,7 @@ class Basis(State):
 			for outcome in action.outcomes:
 				if self.triggered_by(outcome.transition(z)):
 					g[z] += action.outcome_probs[outcome]
-		return g
+		
+		domain = LazyCollection(fixed_at_start.union(free_at_start), True)
+		return g, domain
 
