@@ -12,8 +12,8 @@ class Action:
 	def __init__(self, name, cost, prereq, outcome_dist):
 		"""
 		cost > 0
-		prereq: State.Prereq object
-		outcome_dist: mapping of State.Outcome objects to probabilities
+		prereq: MDP_State.State object
+		outcome_dist: mapping of MDP_State.Outcome objects to probabilities
 		"""
 		self.name = name
 		self.cost = cost

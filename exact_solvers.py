@@ -40,8 +40,7 @@ def exact_primal_LP(mdp):
 
 	# backpropagation
 	for state,action in product(mdp.reachable_states, mdp.actions):
-		if action.prereq.consistent(state) and \
-				action.can_change(state, mdp.variables):
+		if action.prereq <= state and action.can_change(state, mdp.variables):
 			const = action.stop_prob * mdp.terminal_reward(state)
 			const -= action.cost
 			expr = G.LinExpr(float(const))
@@ -72,7 +71,7 @@ def exact_dual_LP(mdp):
 	for s in mdp.reachable_states:
 		sa_vars.append((s, "STOP", lp.addVar(name=str(s)+"_STOP", lb=0)))
 		for a in mdp.actions:
-			if a.prereq.consistent(s):
+			if a.prereq <= s:
 				sa_vars.append((s, a, lp.addVar(name=str(s)+"_"+a.name, lb=0)))
 	lp.update()
 
@@ -88,7 +87,7 @@ def exact_dual_LP(mdp):
 
 	# set constraints
 	for s in mdp.reachable_states:
-		constr = G.quicksum([v for _,a,v in sa_vars.select(s)])
+		constr = G.quicksum([v for _,__,v in sa_vars.select(s)])
 		for parent,action in mdp.reachable_states[s]:
 			prob = action.trans_prob(parent, s, mdp.variables)
 			var = sa_vars.select(parent,action)[0][2]
@@ -145,7 +144,7 @@ def greedy_policy(mdp, values):
 		best_action = None
 		best_value = mdp.terminal_reward(state)
 		for action in mdp.actions:
-			if action.prereq.consistent(state):
+			if action.prereq <= state:
 				act_val = action_value(mdp, state, action, values) 
 				if act_val > best_value:
 					best_value = act_val

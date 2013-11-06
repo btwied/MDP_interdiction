@@ -5,8 +5,7 @@ from collections import defaultdict
 from numpy.random import uniform
 
 from CachedAttr import CachedAttr
-from LazyCollection import LazyCollection
-from MDP_State import Basis, Outcome, Prereq, State
+from MDP_State import Basis, Outcome, State, all_states
 from MDP_Action import Action
 
 
@@ -44,15 +43,14 @@ class MDP:
 		actions: a collection of Action objects; none may be named STOP.
 		true_rwds: mapping {v:r}, where reward r is received if v=True
 				upon termination.
-		true_rwds: same, but v=False
+		false_rwds: same, but v=False
 		"""
-		self.variables = LazyCollection(variables, sort=True)
-		self.initial = State(initial, self.variables.difference(initial), \
-							sort=True)
+		self.variables = frozenset(variables)
+		self.initial = State(initial, self.variables.difference(initial))
 		self.actions = actions
 		self.true_rewards = true_rwds
 		self.false_rewards = false_rwds
-		self.state_rewards = {}
+		self.state_rewards = {} #stores terminal rewards once computed
 
 	def __repr__(self):
 		s = "MDP: "
@@ -74,7 +72,7 @@ class MDP:
 	@CachedAttr
 	def full_states(self):
 		"""The full (exponentially large) set of states."""
-		return map(State, product([0,1], repeat=len(self.variables)))
+		return all_states(free=self.variables)
 
 	@CachedAttr
 	def reachable_states(self):
@@ -86,7 +84,7 @@ class MDP:
 			state = unvisited.pop()
 			visited.add(state)
 			for action in self.actions:
-				if action.prereq.consistent(state):
+				if action.prereq <= state:
 					for outcome in action.outcomes:
 						next_state = outcome.transition(state)
 						parents = reachable.get(next_state,set())
@@ -96,17 +94,6 @@ class MDP:
 							unvisited.add(next_state)
 		return reachable
 		
-	@CachedAttr
-	def default_basis(self):
-		"""
-		Creates a basis function for each literal, prereq, and outcome.
-		"""
-		basis = [Basis((v),()) for v in self.variables]
-		for a in self.actions:
-			basis.append(a.prereq)
-			basis.extend(a.outcomes)
-		return basis
-
 
 def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 				max_pos_prereqs=2, max_neg_prereqs=0, min_outs=20, \
@@ -133,7 +120,7 @@ def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 		pos_prereqs = sample(MDP_vars, randrange(max_pos_prereqs + 1))
 		neg_prereqs = sample(vars_set - set(pos_prereqs), \
 							randrange(max_neg_prereqs + 1))
-		act_prereq = Prereq(pos_prereqs, neg_prereqs)
+		act_prereq = State(pos_prereqs, neg_prereqs)
 
 		act_outs =  sample(MDP_outs, randrange(min_outs_per_act, \
 							max_outs_per_act + 1))

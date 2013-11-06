@@ -1,4 +1,5 @@
 from useful_functions import powerset
+from MDP_State import all_states
 
 # import Gurobi but don't crash if it wasn't loaded
 import warnings
@@ -48,15 +49,15 @@ def factored_primal_LP(mdp):
 
 	# add constraints
 	for a in mdp.actions:
-		backprojections = map(lambda b: b.backprojection(a), basis_funcs)
-		max_constr = bucket_elimination(lp, backprojections, order)
+		backprojections = {b:b.backprojection(a) for b in basis_funcs}
+		max_constr = bucket_elimination(lp, backprojections, basis_vars)
 		lp.addConstr(G.LinExpr(a.cost), G.GRB.GREATER_EQUAL, max_constr)
-	raise NotImplementedError("TODO: handle STOP action")
+	raise NotImplementedError("TODO: handle STOP action")#TODO: fix this
 	lp.optimize()	
 	return lp, basis
 
 
-def bucket_elimination(lp, funcs):
+def bucket_elimination(lp, backprojections, basis_vars):
 	"""
 	Maximize sum(funcs) over the MDP's state space in sub-exponential time.
 
@@ -64,42 +65,46 @@ def bucket_elimination(lp, funcs):
 	right-hand side of the final constraint: cost >= max(sum(funcs)).
 
 	lp:		gurobipy Model object. WILL BE MODIFIED.
-	funcs:	list of (function, domain) pairs, where each function is a dict
-			mapping States to numerical values and each domain is a collection
-			of variables.
+	funcs:	list of (function, domain, basis_var) pairs, where each function is
+			a dict mapping States to numerical values, each domain is a 
+			collection of variables, and each basis_var is an LP variable.
 	"""
 	# order variable eliminations from least to most common occurrence
 	occurrence_counts = {}
-	for _,dom in funcs:
-		for var in dom:
-			occurrence_counts[var] = occurrence_counts.get(var, 0) + 1
+	for g in backprojections:
+		if len(g) > 0:
+			for var in g.itervalues().next():
+				occurrence_counts[var] = occurrence_counts.get(var, 0) + 1
 	order = sorted(occurrence_counts, key=occurrence_counts.get)
 
-	lp_vars = []
-	for func,dom in funcs:
-		for state in func:
-			lp.addVar(name=str(state),lb=-float("inf"),ub=float("inf"))#TODO: fix this
-			lp.addConstr() #TODO: implement this
+	interim_funcs = []
+	for b,g in backprojections.itervalues():
+		for state in g:
+			ufz = lp.addVar(name="u^"+str(b)+"_"+str(state), \
+							lb=-float("inf"), ub=float("inf"))
+			interim_funcs.append((ufz, state))
+			lp.addConstr(ufz, basis_vars[b] * g[state], G.GRB.EQUAL)
 
-	for var in order:#TODO: fix this
-		eliminated = filter(lambda f: var in f.iterkeys().next(), funcs)
-		lp_vars = filter(lambda f: var in f.iterkeys().next(), funcs)
-		funcs = filter(lambda func_dom: var not in func_dom[1], funcs)
-		new_domain = reduce(set.union, eliminated_domains) - {var}
-		new_func = {}
-		for true_vars in powerset(new_domain, set):
-			false_vars = new_domain - true_vars
-			var_true_state = State(true_vars.union({var}), false_vars)
-			var_false_state = State(true_vars, false_vars.union({var}))
-			no_var_state = State(true_vars, false_vars)
-			var_true_sum = sum(map(lambda f: f.get(var_true_state, 0), \
-									eliminated))
-			var_false_sum = sum(map(lambda f: f.get(var_false_state, 0), \
-									eliminated))
-			new_func(no_var_state) = max(var_true_sum, var_false_sum)
-			funcs.add((new_func, new_domain))
-#NEED TO DEAL WITH LP VARS and only LP vars!!!
-	raise NotImplementedError("TODO: implement bucket elimination")
+	raise NotImplementedError("TODO: eliminate variables")#TODO: fix this
+	for i,var in enumerate(order):#TODO: fix this
+		eliminated = filter(lambda pair: var in pair[1], interim_funcs)
+		interim_funcs = filter(lambda pair: var not in pair[1], interim_funcs)
+		new_domain = set()
+		for u,z in eliminated:
+			new_domain.update(z)
+		new_domain -= {var}
+		# add constraint for each assignment in new_domain
+		# add new function to interim_funcs
+		# add new function to LP vars???
+#		for state in all_states(new_domain):
+#			filter()
+#			lp.addConstr(G.quicksum())
+#			interim_funcs.append()
+#			filter()
+#			lp.addConstr(G.quicksum())
+#			interim_funcs.append()
+		
+	return G.quicksum(interim_funcs)#WTF is this doing???
 
 
 def factored_dual_LP(mdp):
