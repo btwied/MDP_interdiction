@@ -133,7 +133,7 @@ class Basis(State):
 			for outcome in action.outcomes:
 				if self <= outcome.transition(z):
 					g[z] = g.get(z,0) + action.outcome_probs[outcome]
-		return g, domain
+		return g#, domain
 
 
 def all_states(pos=set(), neg=set(), free=set(), cls=State):
@@ -141,4 +141,4 @@ def all_states(pos=set(), neg=set(), free=set(), cls=State):
 	Generate all states consistent with pos, neg, and free variable sets.
 	"""
 	for s in powerset(free):
-		yield cls(pos | s, neg | (free - s))
+		yield cls(pos | set(s), neg | (free - set(s)))

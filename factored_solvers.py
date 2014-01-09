@@ -14,97 +14,68 @@ except ImportError:
 def default_basis(mdp):
 	"""
 	Creates a basis function for each literal, prereq, and outcome.
+
+	The constant function f(x)=1 is also included in the basis to ensure LP 
+	feasibility.
 	"""
 	basis_set = {Basis((),())}
 	basis_set.update(Basis((v),()) for v in mdp.variables)
-#	basis_set.update(Basis((),(v)) for v in mdp.variables)
+	basis_set.update(Basis((),(v)) for v in mdp.variables)
 	for a in mdp.actions:
 		basis_set.add(Basis(*a.prereq))
 		basis_set.update(map(lambda o: Basis(*o), a.outcomes))
 	return basis
 
 
-def factored_primal_LP(mdp):
+def factored_primal_LP(mdp, basis_vars=None, order=None):
 	"""
 	Construct a factored LP to approximately solve the MDP with gurobi.
 
 	This LP follows the construction given by Guestrin, et al. in
 	'Efficient Solution Algorithms for Factored MDPs', JAIR 2003.
-
-	The constant function f(x)=1 will be added to the basis
-	automatically to ensure LP feasibility. Using default_basis
-	is probably a good place to start.
 	"""
 	lp = G.Model() # Throws a NameError if gurobipy wasn't loaded
 
-	basis_vars = {}
-	basis_funcs = default_basis(mdp)
-	for b in basis_funcs:
-		basis_vars[b] = lp.addVar(name=str(b),lb=-float("inf"),ub=float("inf"))
-	lp.update()
+	if basis_vars == None:
+		basis_vars = [(b, lp.addVar(name='w_' + str(b), lb=-float("inf"), \
+						ub=float("inf"))) for b in default_basis(mdp)]
+		lp.update()
+	if order == None:
+		order = sorted(mdp.variables)
 
-	# set objective based on basis functions with f(Initial)=1
-	lp.setObjective(G.quicksum([basis_vars[b] for b in filter(lambda b: \
-					b.triggered_by(mdp.initial), basis_funcs)]))
-
-	# add constraints
 	for a in mdp.actions:
-		backprojections = {b:b.backprojection(a) for b in basis_funcs}
-		max_constr = bucket_elimination(lp, backprojections, basis_vars)
-		lp.addConstr(G.LinExpr(a.cost), G.GRB.GREATER_EQUAL, max_constr)
-	raise NotImplementedError("TODO: handle STOP action")#TODO: fix this
-	lp.optimize()	
-	return lp, basis
-
-
-def bucket_elimination(lp, backprojections, basis_vars):
-	"""
-	Maximize sum(funcs) over the MDP's state space in sub-exponential time.
-
-	Adds intermediate constraints to the LP and returns the expression for the
-	right-hand side of the final constraint: cost >= max(sum(funcs)).
-
-	lp:		gurobipy Model object. WILL BE MODIFIED.
-	funcs:	list of (function, domain, basis_var) pairs, where each function is
-			a dict mapping States to numerical values, each domain is a 
-			collection of variables, and each basis_var is an LP variable.
-	"""
-	# order variable eliminations from least to most common occurrence
-	occurrence_counts = {}
-	for g in backprojections:
-		if len(g) > 0:
-			for var in g.itervalues().next():
-				occurrence_counts[var] = occurrence_counts.get(var, 0) + 1
-	order = sorted(occurrence_counts, key=occurrence_counts.get)
-
-	interim_funcs = []
-	for b,g in backprojections.itervalues():
-		for state in g:
-			ufz = lp.addVar(name="u^"+str(b)+"_"+str(state), \
+		# initialize ufz variables
+		func_domains = set()
+		for b,w in basis_vars:
+			g = b.backprojection(a)
+			for z,val in g.items(): # states,values in domain,range of g
+				h = z <= b # h_i(x), aka does b trigger in state z?
+				u = lp.addVar(name="u_"+str(a)+"_"+str(b)+"_"+str(z), \
 							lb=-float("inf"), ub=float("inf"))
-			interim_funcs.append((ufz, state))
-			lp.addConstr(ufz, basis_vars[b] * g[state], G.GRB.EQUAL)
+				lp.addConstr(u, '=', w * (val + h)) # u^{f_i}_z = w_i*c_i(z)
+				func_domains.add((u,z))
+		# convert max constraint to linear constraints
+		for var in order:
+			# eliminate variable
+			relevant = filter(lambda f: var in f[1], func_domains):
+			for z in all_states(free = (z.pos | z.neg) - {var})
+				pos_dom = State(z.pos | {var}, z.neg)
+				neg_dom = State(z.pos, z.neg | {var})
+				pos_sum = [f[0] for f in relevant if f[1] <= pos_dom]
+				neg_sum = [f[0] for f in relevant if f[1] <= neg_dom]
+				u = lp.addVar(name="u_"+str(a)+"_"+str(var)+"_"+str(z), \
+							lb=-float("inf"), ub=float("inf"))
+				lp.addConstr(u, G.GRB.GREATER_EQUAL, G.quicksum(pos_sum))
+				lp.addConstr(u, G.GRB.GREATER_EQUAL, G.quicksum(neg_sum))
+				func_domains.append((u,z))
+			func_domains -= set(relevant)
+		# there should be only one constraint function left
+		lp.addConstr(a.cost, G.GRB.GREATER_EQUAL, func_domains.pop())
 
-	raise NotImplementedError("TODO: eliminate variables")#TODO: fix this
-	for i,var in enumerate(order):#TODO: fix this
-		eliminated = filter(lambda pair: var in pair[1], interim_funcs)
-		interim_funcs = filter(lambda pair: var not in pair[1], interim_funcs)
-		new_domain = set()
-		for u,z in eliminated:
-			new_domain.update(z)
-		new_domain -= {var}
-		# add constraint for each assignment in new_domain
-		# add new function to interim_funcs
-		# add new function to LP vars???
-#		for state in all_states(new_domain):
-#			filter()
-#			lp.addConstr(G.quicksum())
-#			interim_funcs.append()
-#			filter()
-#			lp.addConstr(G.quicksum())
-#			interim_funcs.append()
-		
-	return G.quicksum(interim_funcs)#WTF is this doing???
+	# set objective
+	#TODO
+
+	return lp
 
 
 def factored_dual_LP(mdp):
