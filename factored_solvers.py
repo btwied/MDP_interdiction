@@ -73,7 +73,7 @@ def factored_primal_LP(mdp, basis_vars=None, order=None):
 		lp.addConstr(a.cost, G.GRB.GREATER_EQUAL, func_domains.pop())
 
 	# set objective
-	#TODO
+	lp.setObjective(G.quicksum([b[1] for b in basis_vars if b[0] <= initial]))
 
 	return lp
 
