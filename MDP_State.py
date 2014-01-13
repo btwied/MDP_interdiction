@@ -1,6 +1,3 @@
-from numpy import array
-from types import StringTypes
-
 from CachedAttr import CachedAttr
 from useful_functions import powerset
 

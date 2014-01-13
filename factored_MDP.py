@@ -127,12 +127,12 @@ def random_MDP(min_vars=10, max_vars=10, min_acts=10, max_acts=10, \
 		act_probs = uniform(0,1,len(act_outs))
 		act_probs /= (act_probs.sum() / (1 - uniform(min_stop_prob, \
 													max_stop_prob)))
-		MDP_acts.append(Action("a"+str(i), uniform(min_cost, max_cost), \
-						act_prereq, dict(zip(act_outs, act_probs))))
+		MDP_acts.append(Action("a"+str(i), float(uniform(min_cost, max_cost)),\
+						act_prereq, dict(zip(act_outs, map(float, act_probs)))))
 
-	true_rwds = {v : uniform(min_true_rwd, max_true_rwd) for v in \
+	true_rwds = {v : float(uniform(min_true_rwd, max_true_rwd)) for v in \
 				sample(MDP_vars, true_rwds)}
-	false_rwds = {v : uniform(min_false_rwd, max_false_rwd) for v in \
+	false_rwds = {v : float(uniform(min_false_rwd, max_false_rwd)) for v in \
 				sample(vars_set - set(true_rwds), false_rwds)}
 	return MDP(MDP_vars, [], MDP_acts, true_rwds, false_rwds)
 
