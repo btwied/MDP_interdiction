@@ -26,7 +26,7 @@ def default_basis(mdp):
 	return basis_set
 
 
-def factored_primal_LP(mdp, basis_vars=None, order=None):
+def factored_primal_LP(mdp, basis_vars={}, order=[]):
 	"""
 	Construct a factored LP to approximately solve the MDP with gurobi.
 
@@ -36,12 +36,26 @@ def factored_primal_LP(mdp, basis_vars=None, order=None):
 	lp = G.Model() # Throws a NameError if gurobipy wasn't loaded
 	lp.modelSense = G.GRB.MINIMIZE
 
-	if basis_vars == None:
-		basis_vars = [(b, lp.addVar(name='w_' + str(i), lb=-float("inf"), \
-				ub=float("inf"))) for i,b in enumerate(default_basis(mdp))]
+	if basis_vars == {}:
+		basis_vars = {b:lp.addVar(name='w_' + str(i), lb=-float("inf"), \
+				ub=float("inf")) for i,b in enumerate(default_basis(mdp))}
 		lp.update()
-	if order == None:
+	if order == []:
 		order = sorted(mdp.variables)
+
+	basis_domains = {}
+	for i,b in enumerate(basis_vars):
+		w = basis_vars[b] # lp variable corresponding to basis b
+		new_constraints = []
+		for j,z in enumerate(g):
+			assert z not in basis_domains, "duplicate basis domain"
+			val = g[z] # value of function g at state z 
+			h = z <= b # h_i(x), aka: does b trigger in state z?
+			u = lp.addVar(name="uf_" + str(i) +"_"+ str(j), \
+							lb=-float("inf"), ub=float("inf"))
+			basis_domains[z] = u
+
+	for i,vr in mdp.true_rwds.items()
 
 	for i,a in enumerate(mdp.actions):
 		# initialize ufz variables
@@ -63,8 +77,9 @@ def factored_primal_LP(mdp, basis_vars=None, order=None):
 			lp.update()
 		# convert max constraint to linear constraints
 		for j,var in enumerate(order):
+#TODO INCLUDE TERMINAL REWARDS!!!
 			# eliminate variable
-			relevant = filter(lambda f: var in f[1], func_domains)
+			relevant = filter(lambda f: var in f[1], func_domains) # misses empty basis (why only sometimes?)
 			rel_dom = reduce(lambda s,r: s|r[1].pos|r[1].neg, relevant, set())
 			rel_dom.remove(var)
 			new_constraints = []
@@ -86,7 +101,8 @@ def factored_primal_LP(mdp, basis_vars=None, order=None):
 			func_domains -= set(relevant)
 		# there should be only one constraint function left
 		assert len(func_domains) == 1, "elimination failed: " + \
-				str(len(func_domains)) + " constraints remaining"
+				str(len(func_domains)) + " constraints remaining:\n" + \
+				"\n".join(map(str, sorted(func_domains)))
 		lp.addConstr(a.cost, G.GRB.GREATER_EQUAL, func_domains.pop())
 
 	# set objective
